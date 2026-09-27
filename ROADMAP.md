@@ -27,8 +27,8 @@
 | **8. AI Commit Assistant** | 14 | 14 | 0 | 0 |
 | **9. Terminal & Shell Integration** | 6 | 5 | 0 | 1 |
 | **10. Architecture, Caching & Performance** | 17 | 17 | 0 | 0 |
-| **11. Settings, Auth & Cross-Cutting** | 23 | 20 | 0 | 3 |
-| **Total** | **213** | **201** | **2** | **10** |
+| **11. Settings, Auth & Cross-Cutting** | 24 | 21 | 0 | 3 |
+| **Total** | **214** | **202** | **2** | **10** |
 
 ---
 
@@ -319,6 +319,7 @@
 | `ST-1121` | **Branch Switch Progress**: While a checkout or new branch is in progress, the branch selector shows a spinner, "Switching…" and the target branch; the repository selector shows a spinner while a repo loads. The new branch name appears as soon as HEAD moves (about 150 ms) instead of after a full `git status`. | `UI/UX` | ✅ Implemented | [TopToolbarView.swift](Sources/Views/Components/TopToolbarView.swift), [WindowTopBarView.swift](Sources/Views/Components/WindowTopBarView.swift), [AppState.swift](Sources/State/AppState.swift) (`checkoutBranch`, `createBranch`). |
 | `ST-1122` | **Picker Search Focus**: The repository and branch pickers focus their filter field when opened, and Enter picks the top match. "New Branch…" focuses the name field. | `UI/UX` | ✅ Implemented | [RepositoryPickerPopover.swift](Sources/Views/Components/RepositoryPickerPopover.swift), [BranchPickerPopover.swift](Sources/Views/Components/BranchPickerPopover.swift). |
 | `ST-1123` | **Larger Back/Forward Arrows**: The title bar's back and forward buttons are larger (14 pt semibold in a 28×24 target). | `UI/UX` | ✅ Implemented | [WindowTopBarView.swift](Sources/Views/Components/WindowTopBarView.swift). |
+| `ST-1124` | **Profile SSH Key for Push/Pull/Fetch**: Remote git commands (push, pull, fetch, clone, ls-remote, submodule), terminal commands and AI chat git calls use the active Git profile's SSH key (`ssh -i <key> -o IdentitiesOnly=yes`), so ssh-agent can no longer pick another GitHub account's key. A repo's own `core.sshCommand` and an existing `GIT_SSH_COMMAND` still take precedence. | `Bug Fix` | ✅ Implemented | [GitService.swift](Sources/Services/GitService.swift), [AppState.swift](Sources/State/AppState.swift), [AIChatTools.swift](Sources/Services/AIChatTools.swift). |
 
 ---
 
