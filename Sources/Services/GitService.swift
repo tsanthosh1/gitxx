@@ -9,6 +9,64 @@ public actor GitService {
 
     public init() {}
 
+    // MARK: - SSH identity
+
+    private static let identityLock = NSLock()
+    nonisolated(unsafe) private static var _sshIdentityPath: String?
+
+    /// Private key of the active Git profile. When set, commands that talk to a remote authenticate with
+    /// only this key; otherwise ssh-agent offers every loaded key and GitHub picks whichever account matches first.
+    public nonisolated static var sshIdentityPath: String? {
+        get { identityLock.lock(); defer { identityLock.unlock() }; return _sshIdentityPath }
+        set {
+            let trimmed = newValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let expanded = trimmed.isEmpty ? nil : NSString(string: trimmed).expandingTildeInPath
+            identityLock.lock(); _sshIdentityPath = expanded; identityLock.unlock()
+        }
+    }
+
+    private static let remoteCommands: Set<String> = ["push", "pull", "fetch", "ls-remote", "clone", "submodule", "remote"]
+
+    /// `GIT_SSH_COMMAND` pinning the profile key, for any process that may run git against an SSH remote.
+    /// Nothing is set when the user already configured `GIT_SSH_COMMAND` or the key file is missing.
+    public nonisolated static func sshEnvironment(base: [String: String] = ProcessInfo.processInfo.environment) -> [String: String] {
+        guard base["GIT_SSH_COMMAND"] == nil, let key = sshIdentityPath,
+              FileManager.default.fileExists(atPath: key) else { return [:] }
+        let quoted = "'" + key.replacingOccurrences(of: "'", with: "'\\''") + "'"
+        return ["GIT_SSH_COMMAND": "ssh -i \(quoted) -o IdentitiesOnly=yes"]
+    }
+
+    /// First git subcommand, skipping global options such as `-c key=value` and `-C dir`.
+    nonisolated static func subcommand(of arguments: [String]) -> String? {
+        var i = 0
+        while i < arguments.count {
+            let a = arguments[i]
+            if a == "-c" || a == "-C" { i += 2; continue }
+            if a.hasPrefix("-") { i += 1; continue }
+            return a
+        }
+        return nil
+    }
+
+    /// A repository's own `core.sshCommand` wins over the profile key.
+    private nonisolated static func repoHasSSHCommand(in directory: String) -> Bool {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        process.arguments = ["config", "--get", "core.sshCommand"]
+        process.currentDirectoryURL = URL(fileURLWithPath: directory)
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        guard (try? process.run()) != nil else { return false }
+        process.waitUntilExit()
+        return process.terminationStatus == 0
+    }
+
+    nonisolated static func remoteEnvironment(arguments: [String], directory: String, base: [String: String]) -> [String: String] {
+        guard let cmd = subcommand(of: arguments), remoteCommands.contains(cmd), sshIdentityPath != nil,
+              !repoHasSSHCommand(in: directory) else { return [:] }
+        return sshEnvironment(base: base)
+    }
+
     // MARK: - Process Runner
 
     public struct GitResult: Sendable {
@@ -34,6 +92,7 @@ public actor GitService {
             // Read-only commands (status, diff) otherwise refresh .git/index and hold index.lock,
             // which blocks git in the user's terminal and retriggers the file watcher.
             environment["GIT_OPTIONAL_LOCKS"] = "0"
+            environment.merge(GitService.remoteEnvironment(arguments: arguments, directory: directory, base: environment)) { _, new in new }
             environment.merge(extraEnvironment) { _, new in new }
             process.environment = environment
 
@@ -96,6 +155,9 @@ public actor GitService {
             environment["LANG"] = "en_US.UTF-8"
             let existingPath = environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
             environment["PATH"] = "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:" + existingPath
+            if !GitService.repoHasSSHCommand(in: directory) {
+                environment.merge(GitService.sshEnvironment(base: environment)) { _, new in new }
+            }
             process.environment = environment
 
             let stdoutPipe = Pipe()

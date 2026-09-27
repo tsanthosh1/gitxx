@@ -183,6 +183,7 @@ public enum AIChatTools {
                 var env = ProcessInfo.processInfo.environment
                 env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:" + (env["PATH"] ?? "/usr/bin:/bin")
                 env["LC_ALL"] = "en_US.UTF-8"
+                env.merge(GitService.remoteEnvironment(arguments: arguments, directory: cwd, base: env)) { _, new in new }
                 env.merge(extra) { _, new in new }
                 process.environment = env
                 let out = Pipe(), err = Pipe()

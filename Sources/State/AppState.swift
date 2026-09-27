@@ -411,6 +411,7 @@ public final class AppState: ObservableObject {
     }() {
         didSet {
             saveProfiles()
+            GitService.sshIdentityPath = activeProfile.sshKeyPath
         }
     }
 
@@ -419,6 +420,7 @@ public final class AppState: ObservableObject {
     }() {
         didSet {
             UserDefaults.standard.set(activeProfileId, forKey: "activeGitProfileId")
+            GitService.sshIdentityPath = activeProfile.sshKeyPath
             refreshRepoSilently()
         }
     }
@@ -632,6 +634,7 @@ public final class AppState: ObservableObject {
             }
         }
 
+        GitService.sshIdentityPath = activeProfile.sshKeyPath
         self.recentRepos = Self.loadSavedRecentRepos()
 
         // Check if custom path was given as command-line argument
