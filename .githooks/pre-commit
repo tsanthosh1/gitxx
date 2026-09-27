@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Blocks commits that add secrets. Bypass for a verified false positive: git commit --no-verify
+exec "$(git rev-parse --show-toplevel)/scripts/scan-secrets.sh" staged

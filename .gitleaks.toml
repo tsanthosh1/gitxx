@@ -1,0 +1,36 @@
+# Secret scanning rules for GitXX (gitleaks v8). Run with `scripts/scan-secrets.sh`.
+title = "GitXX secret scanning"
+
+[extend]
+useDefault = true
+
+# The app talks to GitHub, Copilot and OpenAI-compatible providers; these catch credentials the
+# default rules don't know about.
+
+[[rules]]
+id = "github-copilot-session-token"
+description = "GitHub Copilot session token (from copilot_internal/v2/token)"
+regex = '''tid=[0-9a-f]{32};[A-Za-z0-9_;:=\-]*exp=\d{10}'''
+keywords = ["tid="]
+
+[[rules]]
+id = "hardcoded-authorization-header"
+description = "Literal Authorization header value"
+regex = '''(?i)authorization["']?\s*[:=,]\s*["'](?:bearer|token|basic)\s+[A-Za-z0-9_\-\.=+/]{20,}["']'''
+keywords = ["authorization"]
+
+[[rules]]
+id = "keychain-token-literal"
+description = "Token passed as a literal to KeychainHelper"
+regex = '''KeychainHelper\.\w+\(\s*"[A-Za-z0-9_\-]{24,}"'''
+keywords = ["keychainhelper"]
+
+[allowlist]
+description = "Build output and UI placeholders"
+paths = [
+  '''(^|/)\.build/''',
+  '''(^|/)GitXX\.app/''',
+]
+regexes = [
+  '''ghp_x{20}''',
+]

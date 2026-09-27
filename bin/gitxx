@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+# gitxx - Command line tool to open repositories in GitXX macOS App
+
+set -e
+
+show_help() {
+    cat << EOF
+GitXX CLI - Fast repository opener for GitXX
+
+Usage:
+    gitxx [OPTIONS] [DIRECTORY]
+
+Arguments:
+    DIRECTORY    Path to git repository (defaults to current working directory)
+
+Options:
+    -h, --help       Show this help message
+    -v, --version    Show GitXX CLI version
+    --install        Install symlink into ~/.local/bin
+
+Examples:
+    gitxx            Open repository in current directory
+    gitxx .          Open repository in current directory
+    gitxx ../my-repo Open repository at ../my-repo
+EOF
+    exit 0
+}
+
+if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+    show_help
+fi
+
+if [ "$1" = "-v" ] || [ "$1" = "--version" ]; then
+    echo "gitxx CLI version 1.0.0"
+    exit 0
+fi
+
+if [ "$1" = "--install" ]; then
+    SCRIPT_PATH="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+    TARGET_DIR="$HOME/.local/bin"
+    mkdir -p "$TARGET_DIR"
+    ln -sf "$SCRIPT_PATH" "$TARGET_DIR/gitxx"
+    echo "✅ Successfully installed 'gitxx' to $TARGET_DIR/gitxx"
+    exit 0
+fi
+
+# 1. Resolve target directory (default to current directory)
+TARGET_DIR="${1:-.}"
+
+if [ ! -d "$TARGET_DIR" ]; then
+    echo "❌ Error: '$TARGET_DIR' is not a valid directory." >&2
+    exit 1
+fi
+
+TARGET_PATH=$(cd "$TARGET_DIR" 2>/dev/null && pwd -P)
+
+# 2. Verify if directory is a git repository
+if ! git -C "$TARGET_PATH" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "❌ Error: '$TARGET_PATH' is not a git repository." >&2
+    exit 1
+fi
+
+# 3. Resolve git repository top-level root
+REPO_ROOT=$(git -C "$TARGET_PATH" rev-parse --show-toplevel)
+
+# 4. Locate GitXX application
+APP_PATH=""
+if [ -d "/Applications/GitXX.app" ]; then
+    APP_PATH="/Applications/GitXX.app"
+elif [ -d "$HOME/Applications/GitXX.app" ]; then
+    APP_PATH="$HOME/Applications/GitXX.app"
+fi
+
+# Fallback: check relative to script bundle if inside GitXX.app
+SCRIPT_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
+if [[ "$SCRIPT_DIR" == *"/GitXX.app/"* ]]; then
+    BUNDLE_ROOT="${SCRIPT_DIR%%/GitXX.app/*}/GitXX.app"
+    if [ -d "$BUNDLE_ROOT" ]; then
+        APP_PATH="$BUNDLE_ROOT"
+    fi
+fi
+
+# Fallback: development build next to this script's checkout (follows the ~/.local/bin symlink)
+SELF="$0"
+while [ -L "$SELF" ]; do SELF="$(readlink "$SELF")"; done
+DEV_APP="$(cd "$(dirname "$SELF")/.." 2>/dev/null && pwd)/GitXX.app"
+if [ -z "$APP_PATH" ] && [ -d "$DEV_APP" ]; then
+    APP_PATH="$DEV_APP"
+fi
+
+# 5. Send open command to single active window
+ENCODED_PATH=$(python3 -c 'import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1]))' "$REPO_ROOT" 2>/dev/null || echo "$REPO_ROOT")
+
+if ! pgrep -x "GitXX" >/dev/null 2>&1; then
+    # App is not running: launch it with --open
+    if [ -n "$APP_PATH" ]; then
+        open -a "$APP_PATH" --args --open "$REPO_ROOT"
+    else
+        open -a "GitXX" --args --open "$REPO_ROOT"
+    fi
+else
+    # App is already running: send URL to single active window without creating extra windows or tabs
+    open "gitxx://open?path=$ENCODED_PATH" 2>/dev/null || {
+        if [ -n "$APP_PATH" ]; then
+            open -a "$APP_PATH"
+        else
+            open -a "GitXX"
+        fi
+    }
+fi
+
+echo "🚀 Opened in GitXX: $(basename "$REPO_ROOT") ($REPO_ROOT)"
