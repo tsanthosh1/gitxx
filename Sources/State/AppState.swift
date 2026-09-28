@@ -635,6 +635,9 @@ public final class AppState: ObservableObject {
         }
 
         GitService.sshIdentityPath = activeProfile.sshKeyPath
+        for profile in gitProfiles where profile.githubUsername.isEmpty {
+            resolveProfileGitHubLogin(id: profile.id)
+        }
         self.recentRepos = Self.loadSavedRecentRepos()
 
         // Check if custom path was given as command-line argument
@@ -2889,6 +2892,7 @@ public final class AppState: ObservableObject {
         gitProfiles.append(profile)
         saveProfiles()
         showToast("Added Git profile: \(profile.label)", type: .success)
+        resolveProfileGitHubLogin(id: profile.id)
     }
 
     public func updateProfile(_ profile: GitUserProfile) {
@@ -2900,6 +2904,7 @@ public final class AppState: ObservableObject {
             } else {
                 showToast("Updated profile: \(profile.label)", type: .success)
             }
+            resolveProfileGitHubLogin(id: profile.id)
         }
     }
 
@@ -2913,30 +2918,68 @@ public final class AppState: ObservableObject {
         showToast("Profile removed", type: .info)
     }
 
-    public func resolveGitHubAvatar(for username: String) async -> String? {
-        let trimmed = username.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
+    /// Fills in a missing GitHub username (which drives the avatar) from the profile's SSH key, then its email.
+    public func resolveProfileGitHubLogin(id: String) {
+        guard let profile = gitProfiles.first(where: { $0.id == id }),
+              profile.githubUsername.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        let token = githubToken
+        Task { [weak self] in
+            guard let self else { return }
+            var login = await Self.gitHubLogin(sshKeyPath: profile.sshKeyPath)
+            if login == nil {
+                login = await self.gitHubLogin(email: profile.email, token: token)
+            }
+            guard let login, let idx = self.gitProfiles.firstIndex(where: { $0.id == id }),
+                  self.gitProfiles[idx].githubUsername.isEmpty else { return }
+            self.gitProfiles[idx].githubUsername = login
+            self.saveProfiles()
+        }
+    }
 
-        let ghPath = "/opt/homebrew/bin/gh"
-        if FileManager.default.isExecutableFile(atPath: ghPath) {
+    /// `ssh -T git@github.com` answers "Hi <login>! ..." for the account that owns the key.
+    nonisolated static func gitHubLogin(sshKeyPath: String) async -> String? {
+        let key = (sshKeyPath.trimmingCharacters(in: .whitespaces) as NSString).expandingTildeInPath
+        guard !sshKeyPath.isEmpty, FileManager.default.fileExists(atPath: key) else { return nil }
+        return await Task.detached {
             let process = Process()
-            process.executableURL = URL(fileURLWithPath: ghPath)
-            process.arguments = ["api", "users/\(trimmed)", "--jq", ".avatar_url"]
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
+            process.arguments = [
+                "-T", "-i", key, "-o", "IdentitiesOnly=yes", "-o", "BatchMode=yes",
+                "-o", "ConnectTimeout=8", "-o", "StrictHostKeyChecking=accept-new", "git@github.com"
+            ]
             let pipe = Pipe()
             process.standardOutput = pipe
-            do {
-                try process.run()
-                process.waitUntilExit()
-                if process.terminationStatus == 0 {
-                    let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                    let urlStr = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if let urlStr = urlStr, urlStr.hasPrefix("http") {
-                        return urlStr
-                    }
-                }
-            } catch {}
+            process.standardError = pipe
+            process.standardInput = FileHandle.nullDevice
+            guard (try? process.run()) != nil else { return nil }
+            let output = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            process.waitUntilExit()
+            guard let range = output.range(of: #"Hi ([A-Za-z0-9-]+)!"#, options: .regularExpression) else { return nil }
+            return String(output[range].dropFirst(3).dropLast())
+        }.value
+    }
+
+    private func gitHubLogin(email: String, token: String?) async -> String? {
+        let email = email.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !email.isEmpty else { return nil }
+        if email.hasSuffix("@users.noreply.github.com") {
+            let local = email.split(separator: "@")[0]
+            return local.split(separator: "+").last.map(String.init)
         }
-        return "https://github.com/\(trimmed).png?size=96"
+        guard let token, !token.isEmpty,
+              let q = email.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else { return nil }
+        let lookups: [(path: String, login: ([String: Any]) -> String?)] = [
+            ("/search/users?q=\(q)+in:email&per_page=1", { $0["login"] as? String }),
+            ("/search/commits?q=author-email:\(q)&per_page=1", { ($0["author"] as? [String: Any])?["login"] as? String })
+        ]
+        for lookup in lookups {
+            guard let data = try? await gitHubService.sendREST(method: "GET", path: lookup.path, token: token, actionName: "Resolve profile avatar"),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let first = (json["items"] as? [[String: Any]])?.first,
+                  let login = lookup.login(first) else { continue }
+            return login
+        }
+        return nil
     }
 
     // MARK: - AI Commit Generation & Copilot Auth

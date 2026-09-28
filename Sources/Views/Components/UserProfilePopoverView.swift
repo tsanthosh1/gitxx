@@ -79,36 +79,35 @@ private struct ProfileOptionRow: View {
                             .font(.system(size: 12.5, weight: isActive ? .bold : .medium))
                             .foregroundStyle(isActive ? Color.white : Color.primary)
 
+                            .lineLimit(1)
+
                         if !profile.githubUsername.isEmpty {
                             Text("@\(profile.githubUsername)")
                                 .font(.system(size: 10.5))
                                 .foregroundStyle(isActive ? Color.white.opacity(0.7) : Color.secondary)
+                                .lineLimit(1)
                         }
                     }
 
-                    HStack(spacing: 5) {
-                        Text(profile.email)
-                            .font(.system(size: 10, design: .monospaced))
-                            .foregroundStyle(isActive ? Color.white.opacity(0.85) : Color.secondary)
-                            .lineLimit(1)
+                    Text(profile.email)
+                        .font(.system(size: 10.5, design: .monospaced))
+                        .foregroundStyle(isActive ? Color.white.opacity(0.85) : Color.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
 
-                        if !profile.sshKeyPath.isEmpty {
-                            Text("•")
-                                .font(.system(size: 9))
-                                .foregroundStyle(isActive ? Color.white.opacity(0.4) : Color.secondary.opacity(0.4))
-
+                    if !profile.sshKeyPath.isEmpty {
+                        HStack(spacing: 4) {
                             Image(systemName: "key.fill")
                                 .font(.system(size: 8))
-                                .foregroundStyle(isActive ? Color.white.opacity(0.6) : Color.secondary.opacity(0.6))
-
-                            Text(profile.sshKeyPath)
-                                .font(.system(size: 9, design: .monospaced))
-                                .foregroundStyle(isActive ? Color.white.opacity(0.6) : Color.secondary.opacity(0.6))
+                            Text((profile.sshKeyPath as NSString).abbreviatingWithTildeInPath)
+                                .font(.system(size: 10, design: .monospaced))
+                                .lineLimit(1)
+                                .truncationMode(.middle)
                         }
+                        .foregroundStyle(isActive ? Color.white.opacity(0.6) : Color.secondary.opacity(0.8))
                     }
                 }
-
-                Spacer()
+                .frame(maxWidth: .infinity, alignment: .leading)
 
                 if isActive {
                     Image(systemName: "checkmark.circle.fill")

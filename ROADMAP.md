@@ -27,8 +27,8 @@
 | **8. AI Commit Assistant** | 14 | 14 | 0 | 0 |
 | **9. Terminal & Shell Integration** | 6 | 5 | 0 | 1 |
 | **10. Architecture, Caching & Performance** | 17 | 17 | 0 | 0 |
-| **11. Settings, Auth & Cross-Cutting** | 24 | 21 | 0 | 3 |
-| **Total** | **214** | **202** | **2** | **10** |
+| **11. Settings, Auth & Cross-Cutting** | 25 | 22 | 0 | 3 |
+| **Total** | **215** | **203** | **2** | **10** |
 
 ---
 
@@ -320,6 +320,7 @@
 | `ST-1122` | **Picker Search Focus**: The repository and branch pickers focus their filter field when opened, and Enter picks the top match. "New Branch…" focuses the name field. | `UI/UX` | ✅ Implemented | [RepositoryPickerPopover.swift](Sources/Views/Components/RepositoryPickerPopover.swift), [BranchPickerPopover.swift](Sources/Views/Components/BranchPickerPopover.swift). |
 | `ST-1123` | **Larger Back/Forward Arrows**: The title bar's back and forward buttons are larger (14 pt semibold in a 28×24 target). | `UI/UX` | ✅ Implemented | [WindowTopBarView.swift](Sources/Views/Components/WindowTopBarView.swift). |
 | `ST-1124` | **Profile SSH Key for Push/Pull/Fetch**: Remote git commands (push, pull, fetch, clone, ls-remote, submodule), terminal commands and AI chat git calls use the active Git profile's SSH key (`ssh -i <key> -o IdentitiesOnly=yes`), so ssh-agent can no longer pick another GitHub account's key. A repo's own `core.sshCommand` and an existing `GIT_SSH_COMMAND` still take precedence. | `Bug Fix` | ✅ Implemented | [GitService.swift](Sources/Services/GitService.swift), [AppState.swift](Sources/State/AppState.swift), [AIChatTools.swift](Sources/Services/AIChatTools.swift). |
+| `ST-1125` | **Auto-Resolved Profile Avatars & Tidier Profile Switcher**: When a profile is added, edited, or loaded at launch without a GitHub username, it is looked up from the SSH key (`ssh -T git@github.com`), then from the email (noreply address, user search, commit search), so the avatar appears without extra steps. In the profile switcher, the email and SSH key sit on separate single lines with middle truncation, and the Home repository icons are neutral gray instead of the accent color. | `UI/UX` | ✅ Implemented | [AppState.swift](Sources/State/AppState.swift), [UserProfilePopoverView.swift](Sources/Views/Components/UserProfilePopoverView.swift), [HomeView.swift](Sources/Views/Home/HomeView.swift). |
 
 ---
 

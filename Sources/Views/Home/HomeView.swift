@@ -220,9 +220,9 @@ private struct HomeRepositoryRow: View {
         HStack(spacing: 12) {
             Image(systemName: "book.closed.fill")
                 .font(.system(size: 15))
-                .foregroundStyle(state.accentTheme.primaryColor)
+                .foregroundStyle(.secondary)
                 .frame(width: 30, height: 30)
-                .background(state.accentTheme.primaryColor.opacity(0.12))
+                .background(Color.primary.opacity(0.07))
                 .clipShape(RoundedRectangle(cornerRadius: 7))
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 8) {
