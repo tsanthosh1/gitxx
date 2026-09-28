@@ -102,15 +102,7 @@ public struct CommitLogSidebarView: View {
             }
 
             HStack(spacing: 6) {
-                // Author Initial Circle
-                Circle()
-                    .fill(avatarColor(for: commit.authorName))
-                    .frame(width: 14, height: 14)
-                    .overlay(
-                        Text(String(commit.authorName.prefix(1)).uppercased())
-                            .font(.system(size: 8, weight: .bold))
-                            .foregroundStyle(.white)
-                    )
+                CommitAuthorAvatar(state: state, commit: commit, size: 16)
 
                 Text(commit.authorName)
                     .font(.system(size: 10))
@@ -209,11 +201,6 @@ public struct CommitLogSidebarView: View {
         .background((isSelected ? Color.white : color).opacity(0.16), in: RoundedRectangle(cornerRadius: 4))
     }
 
-    private func avatarColor(for name: String) -> Color {
-        let colors: [Color] = [.blue, .purple, .orange, .green, .indigo, .pink]
-        let hash = abs(name.hashValue)
-        return colors[hash % colors.count]
-    }
 }
 
 /// Actions available on a commit, shared by the log's context menu and the commit header.

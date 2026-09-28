@@ -72,8 +72,7 @@ public struct CommitDetailView: View {
 
                     HStack(spacing: 12) {
                         HStack(spacing: 6) {
-                            Image(systemName: "person.circle.fill")
-                                .foregroundStyle(.secondary)
+                            CommitAuthorAvatar(state: state, commit: commit, size: 20)
                             Text(commit.authorName)
                                 .font(.system(size: 12, weight: .medium))
                             if !commit.authorEmail.isEmpty {

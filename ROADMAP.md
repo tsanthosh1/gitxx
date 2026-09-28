@@ -23,12 +23,12 @@
 | **4. Files Changed & Diff Viewer** | 18 | 17 | 0 | 1 |
 | **5. PR Sidebar, List & Navigation** | 48 | 45 | 2 | 1 |
 | **6. Changes & Staging (Local Git)** | 24 | 23 | 0 | 1 |
-| **7. History & Commit Inspector** | 10 | 10 | 0 | 0 |
+| **7. History & Commit Inspector** | 11 | 11 | 0 | 0 |
 | **8. AI Commit Assistant** | 14 | 14 | 0 | 0 |
 | **9. Terminal & Shell Integration** | 6 | 5 | 0 | 1 |
 | **10. Architecture, Caching & Performance** | 17 | 17 | 0 | 0 |
 | **11. Settings, Auth & Cross-Cutting** | 25 | 22 | 0 | 3 |
-| **Total** | **215** | **203** | **2** | **10** |
+| **Total** | **216** | **204** | **2** | **10** |
 
 ---
 
@@ -231,6 +231,7 @@
 | `HS-708` | **Create Tag on Commit**: Create a lightweight tag, or an annotated one when a message is given, from the commit header or context menu, optionally pushing it to origin. | `Improvement` | ✅ Implemented | Tag names are validated and existing tags shown as chips on log rows (`%D` decorations). [HistoryActionSheets.swift](Sources/Views/History/HistoryActionSheets.swift), [GitCommit.swift](Sources/Models/GitCommit.swift). |
 | `HS-709` | **Browse Other Branches' History**: A branch picker in the History sidebar shows any local or remote branch's log, with branch and tag chips on rows. | `Feature` | ✅ Implemented | [CommitLogSidebarView.swift](Sources/Views/History/CommitLogSidebarView.swift), [AppState+LocalGit.swift](Sources/State/AppState+LocalGit.swift). |
 | `HS-710` | **Revert Commit**: Context-menu action that runs `git revert --no-edit` on the current branch, aborting cleanly on a conflict. | `Improvement` | ✅ Implemented | [GitService.swift](Sources/Services/GitService.swift), [AppState+LocalGit.swift](Sources/State/AppState+LocalGit.swift). |
+| `HS-711` | **GitHub Avatars in History**: Commit rows and the commit inspector show the author's GitHub avatar instead of a colored initial. The email is matched to a Git profile or a noreply address first; otherwise one `GET /repos/{owner}/{repo}/commits/{sha}` call per distinct author email, cached across launches. | `UI/UX` | ✅ Implemented | [CommitAvatarResolver.swift](Sources/Services/CommitAvatarResolver.swift), [CommitLogSidebarView.swift](Sources/Views/History/CommitLogSidebarView.swift), [CommitDetailView.swift](Sources/Views/History/CommitDetailView.swift). |
 
 ---
 
