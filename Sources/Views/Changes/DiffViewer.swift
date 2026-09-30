@@ -391,7 +391,7 @@ public struct DiffViewer: View {
                     .foregroundStyle(.secondary)
                     .padding(.leading, 12)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.hoverPlain)
             .pointerCursor()
             .help("Show all")
             Spacer(minLength: 0)
@@ -409,7 +409,7 @@ public struct DiffViewer: View {
                 .frame(width: 26, height: 22)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.hoverPlain)
         .pointerCursor()
         .help(help)
     }
@@ -495,7 +495,7 @@ public struct DiffViewer: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
-            .background(.ultraThinMaterial)
+            .themedSurface(state.accentTheme, .header)
 
             Divider()
 
@@ -520,7 +520,7 @@ public struct DiffViewer: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Color(NSColor.textBackgroundColor))
+        .background(Color.black.opacity(0.12))
         .onChange(of: activeDiff?.path) { _, _ in
             anchorRow = nil
             expansions = [:]

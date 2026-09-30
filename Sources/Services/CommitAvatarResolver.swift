@@ -41,7 +41,7 @@ final class CommitAvatarResolver: ObservableObject {
 
     private func resolve(email: String, sha: String, state: AppState) {
         guard !inFlight.contains(email),
-              let token = state.githubToken, !token.isEmpty,
+              let token = state.effectiveGitHubToken, !token.isEmpty,
               let slug = state.gitHubService.parseRepoOwnerAndName(from: state.currentRepo?.remoteUrl) else { return }
         inFlight.insert(email)
         let service = state.gitHubService

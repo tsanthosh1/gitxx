@@ -123,7 +123,7 @@ public struct PRDetailView: View {
                                     .font(.system(size: 11))
                                     .foregroundStyle(.secondary)
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(.hoverPlain)
                             .help("Clear file filter")
                         }
                     }
@@ -146,7 +146,7 @@ public struct PRDetailView: View {
                     .help("Unified or side-by-side diff")
                 }
                 .padding(10)
-                .background(.ultraThinMaterial)
+                .themedSurface(state.accentTheme, .header)
 
                 Divider()
 
@@ -222,6 +222,7 @@ public struct PRDetailView: View {
                         }
                     }
                     .listStyle(.sidebar)
+                    .scrollContentBackground(.hidden)
                     .onChange(of: state.selectedPRFile?.filename) { _, name in
                         // Follows the diff's scroll position; a no-op when the row is already visible.
                         guard let name else { return }
@@ -231,7 +232,7 @@ public struct PRDetailView: View {
                 }
             }
             .frame(width: 320)
-            .background(Color(NSColor.controlBackgroundColor).opacity(0.4))
+            .themedSurface(state.accentTheme, .sidebar)
             .padding(.top, visibleChromeHeight)
 
             Divider()
@@ -304,7 +305,7 @@ public struct PRDetailView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .background(Color(red: 13/255, green: 17/255, blue: 23/255))
+        .themedSurface(state.accentTheme, .sidebar)
         .onAppear {
             if state.prFiles.isEmpty && !state.isLoadingPRFiles {
                 state.loadPRFiles(for: pr)
@@ -376,7 +377,7 @@ public struct PRDetailView: View {
             .frame(height: 22)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.hoverPlain)
         .help(collapsed ? "Expand folder" : "Collapse folder")
     }
 
@@ -393,7 +394,7 @@ public struct PRDetailView: View {
                     .frame(width: 22, height: 22)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.hoverPlain)
             .help(isViewed ? "Mark as not viewed" : "Mark as viewed")
 
             Text(file.statusLetter)

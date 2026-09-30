@@ -160,6 +160,6 @@ public struct PRLabelPickerPopover: View {
             .padding(.vertical, 7)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.hoverPlain)
     }
 }

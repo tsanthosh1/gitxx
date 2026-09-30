@@ -124,7 +124,7 @@ public struct FirstTimeRepoConfirmationModal: View {
                                 .strokeBorder(Color.white.opacity(0.10), lineWidth: 1)
                         )
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.hoverPlain)
                 .keyboardShortcut(.escape, modifiers: [])
 
                 Button(action: onConfirm) {
@@ -137,7 +137,7 @@ public struct FirstTimeRepoConfirmationModal: View {
                         .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
                         .shadow(color: accentColor.opacity(0.40), radius: 4, x: 0, y: 1.5)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.hoverPlain)
                 .keyboardShortcut(.return, modifiers: [])
             }
             .padding(.horizontal, 24)

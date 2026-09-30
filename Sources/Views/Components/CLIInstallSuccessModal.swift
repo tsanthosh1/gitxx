@@ -143,7 +143,7 @@ public struct CLIInstallSuccessModal: View {
                             .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
                     )
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.hoverPlain)
 
                 Button(action: onDismiss) {
                     Text("Got It")
@@ -155,7 +155,7 @@ public struct CLIInstallSuccessModal: View {
                         .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
                         .shadow(color: accentColor.opacity(0.40), radius: 4, x: 0, y: 1.5)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.hoverPlain)
                 .keyboardShortcut(.return, modifiers: [])
                 .keyboardShortcut(.escape, modifiers: [])
             }

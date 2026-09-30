@@ -143,7 +143,7 @@ public struct PRIndexView: View {
                 }
             }
         }
-        .background(Color(NSColor.windowBackgroundColor))
+        .themedSurface(state.accentTheme, .sidebar)
     }
 
     // MARK: - Top Controls Bar
@@ -261,7 +261,7 @@ public struct PRIndexView: View {
                         .foregroundStyle(.secondary)
                         .font(.system(size: 13))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.hoverPlain)
                 .help("Clear search")
             } else {
                 Text("⌘F")
@@ -320,7 +320,7 @@ public struct PRIndexView: View {
             .background(filterControlBackground(active: author != nil))
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.hoverPlain)
         .help(author.map { "Showing pull requests by \($0)" } ?? "Filter by author")
         .popover(isPresented: $showAuthorPicker, arrowEdge: .bottom) {
             PRAuthorPickerPopover(state: state, isPresented: $showAuthorPicker)
@@ -355,7 +355,7 @@ public struct PRIndexView: View {
             .contentShape(Rectangle())
         }
         .menuStyle(.button)
-        .buttonStyle(.plain)
+        .buttonStyle(.hoverPlain)
         .menuIndicator(.hidden)
         .fixedSize()
         .help("Sort pull requests")
@@ -450,7 +450,7 @@ public struct PRIndexView: View {
             )
             .contentShape(Capsule())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.hoverPlain)
         .pointerCursor()
     }
 
@@ -627,7 +627,7 @@ public struct PRIndexView: View {
                     Button("Load Sample PRs") {
                         state.loadDemoPRs()
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.hoverPlain)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(state.accentTheme.primaryColor)
                 }
@@ -703,7 +703,7 @@ private struct PRQuickActionButton: View {
                     .stroke(isHovered ? Color.primary.opacity(0.20) : Color.primary.opacity(0.08), lineWidth: 1)
             )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.hoverPlain)
         .onHover { isHovered = $0 }
         .pointerCursor()
         .help(tooltip)
@@ -930,7 +930,7 @@ public struct PRIndexRowView: View, Equatable {
                                 .font(.system(size: 10))
                                 .foregroundStyle(copiedBranch ? Color.green : Color.secondary.opacity(0.60))
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.hoverPlain)
                         .help("Copy branch name")
                     }
                     .frame(width: 180, alignment: .leading)

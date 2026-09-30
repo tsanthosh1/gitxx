@@ -168,7 +168,7 @@ public struct PRCommentCardView: View {
                                 .background(Color(red: 48/255, green: 54/255, blue: 61/255).opacity(0.35))
                                 .clipShape(RoundedRectangle(cornerRadius: 4))
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(.hoverPlain)
                             .help("Edit comment")
                         }
 
@@ -196,6 +196,7 @@ public struct PRCommentCardView: View {
                         }
                         .menuStyle(.borderlessButton)
                         .menuIndicator(.hidden)
+                        .iconHover(size: 24)
                         .frame(width: 22, height: 22)
                     }
                     .padding(.horizontal, 14)
@@ -251,7 +252,7 @@ public struct PRCommentCardView: View {
                             .stroke(editTab == .write ? Color(red: 48/255, green: 54/255, blue: 61/255) : Color.clear, lineWidth: 1)
                     )
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.hoverPlain)
 
                 Button {
                     editTab = .preview
@@ -272,7 +273,7 @@ public struct PRCommentCardView: View {
                             .stroke(editTab == .preview ? Color(red: 48/255, green: 54/255, blue: 61/255) : Color.clear, lineWidth: 1)
                     )
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.hoverPlain)
 
                 Spacer()
             }
@@ -366,7 +367,7 @@ public struct PRCommentCardView: View {
                                 .stroke(Color(red: 48/255, green: 54/255, blue: 61/255), lineWidth: 1)
                         )
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.hoverPlain)
                 .disabled(isSaving)
 
                 Button {
@@ -386,7 +387,7 @@ public struct PRCommentCardView: View {
                     .background(Color(red: 35/255, green: 134/255, blue: 54/255))
                     .clipShape(RoundedRectangle(cornerRadius: 6))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.hoverPlain)
                 .disabled(isSaving)
             }
             .padding(.horizontal, 14)

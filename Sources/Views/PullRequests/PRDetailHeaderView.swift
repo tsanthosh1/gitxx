@@ -15,7 +15,7 @@ struct PRDetailHeaderView: View {
     @State private var showMergeStatus = false
 
     private var readiness: PRMergeReadiness {
-        PRMergeReadiness.evaluate(pr: pr, checks: state.prChecks, timeline: state.prTimeline)
+        PRMergeReadiness.evaluate(pr: pr, checks: state.prChecks, timeline: state.prTimeline, meta: state.prMeta)
     }
 
     /// Navy surface distinct from the neutral app toolbar above and the conversation canvas below.
@@ -169,7 +169,7 @@ struct PRDetailHeaderView: View {
                 .frame(width: 18, height: 18)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.hoverPlain)
         .help("Copy branch name")
     }
 
@@ -190,7 +190,7 @@ struct PRDetailHeaderView: View {
                 PRActionLabel("", systemImage: "arrow.clockwise", isRunning: state.isLoadingPRTimeline || state.isLoadingPRChecks)
                     .font(.system(size: 10.5))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.hoverPlain)
             .foregroundStyle(.secondary)
             .frame(width: 18, height: 18)
             .contentShape(Rectangle())
@@ -307,6 +307,9 @@ struct PRDetailHeaderView: View {
                 items.append(.init(id: "review", severity: .warning, short: "Review required", detail: "Approval required", action: .review))
             }
         }
+        if r.isPushRestricted {
+            items.append(.init(id: "push", severity: .blocking, short: "Not authorized", detail: "You're not authorized to push to \(pr.baseBranch)", action: nil))
+        }
         if r.resolutionKnown && r.totalThreads > 0 {
             items.append(r.unresolvedThreads > 0
                 ? .init(id: "threads", severity: .warning, short: "\(r.unresolvedThreads) unresolved",
@@ -329,7 +332,7 @@ struct PRDetailHeaderView: View {
         } label: {
             chipLabel(icon: worst.icon, text: compact ? (problems.isEmpty ? "Ready" : "\(problems.count)") : summary + extra, color: worst.color)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.hoverPlain)
         .pointerCursor()
         .help(problems.isEmpty ? "Ready to merge" : "Merge status: " + problems.map(\.detail).joined(separator: ", "))
         .popover(isPresented: $showMergeStatus, arrowEdge: .bottom) { mergeStatusPopover(items) }
@@ -395,7 +398,7 @@ struct PRDetailHeaderView: View {
                 Label("Go to merge box", systemImage: "arrow.down.to.line")
                     .font(.system(size: 12))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.hoverPlain)
             .foregroundStyle(.secondary)
             .padding(.horizontal, 14)
             .padding(.vertical, 9)
@@ -605,13 +608,16 @@ struct PRDetailHeaderView: View {
                 tabButton(.overview, title: "Conversation", icon: "bubble.left.and.bubble.right", showTitle: titles,
                           count: pr.commentsCount > 0 ? "\(pr.commentsCount)" : nil,
                           badge: unresolved > 0 ? ("\(unresolved) open", Color.orange) : nil)
+                tabDivider
                 tabButton(.commits, title: "Commits", icon: "point.3.connected.trianglepath.dotted", showTitle: titles,
                           count: state.prCommits.isEmpty ? nil : "\(state.prCommits.count)", badge: nil)
-                tabButton(.filesChanged, title: "Files changed", icon: "doc.on.doc", showTitle: titles,
-                          count: fileCount > 0 ? "\(fileCount)" : nil, badge: nil)
+                tabDivider
                 tabButton(.checks, title: "Checks", icon: "checkmark.shield", showTitle: titles,
                           count: state.prChecks.isEmpty ? nil : "\(state.prChecks.count)",
                           badge: failing > 0 ? ("\(failing) failing", Color.red) : (running > 0 ? ("\(running) running", Color.yellow) : nil))
+                tabDivider
+                tabButton(.filesChanged, title: "Files changed", icon: "doc.on.doc", showTitle: titles,
+                          count: fileCount > 0 ? "\(fileCount)" : nil, badge: nil)
             }
             .fixedSize()
         }
@@ -668,6 +674,13 @@ struct PRDetailHeaderView: View {
         }
     }
 
+    private var tabDivider: some View {
+        Rectangle()
+            .fill(Color.primary.opacity(0.1))
+            .frame(width: 1, height: 14)
+            .padding(.horizontal, 3)
+    }
+
     private var threadFilterMenu: some View {
         Menu {
             Picker("Threads", selection: $state.prThreadFilter) {
@@ -695,7 +708,7 @@ struct PRDetailHeaderView: View {
         }
         .menuStyle(.button)
         .menuIndicator(.hidden)
-        .buttonStyle(.plain)
+        .buttonStyle(.hoverPlain)
         .fixedSize()
         .help("Filter review threads")
     }
@@ -748,7 +761,7 @@ struct PRDetailHeaderView: View {
                     .frame(height: 2)
             }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.hoverPlain)
         .pointerCursor()
         .help("\(title) (\(key))")
     }

@@ -8,11 +8,16 @@ public struct GitRetryableOperation {
     public let verb: String
     public let success: String
     public let run: @MainActor () async throws -> Void
+    /// The same operation with git hooks bypassed, offered when a hook rejected it.
+    public var runSkippingHooks: (@MainActor () async throws -> Void)?
 
-    public init(title: String, verb: String, success: String? = nil, run: @escaping @MainActor () async throws -> Void) {
+    public init(title: String, verb: String, success: String? = nil,
+                runSkippingHooks: (@MainActor () async throws -> Void)? = nil,
+                run: @escaping @MainActor () async throws -> Void) {
         self.title = title
         self.verb = verb
         self.success = success ?? "\(verb.prefix(1).uppercased() + verb.dropFirst()) succeeded"
+        self.runSkippingHooks = runSkippingHooks
         self.run = run
     }
 }
@@ -21,12 +26,47 @@ extension AppState {
     /// Shows the failure dialog for `operation`, with fixes chosen from the error output.
     func presentGitFailure(_ operation: GitRetryableOperation, error: Error) {
         let output = error.localizedDescription
-        let kind = GitErrorKind.classify(output)
+        var kind = GitErrorKind.classify(output)
+        if kind == .other, operation.runSkippingHooks != nil, repoHasHooks() { kind = .hookRejected }
         var summary = ""
+        var details = output
+        var highlights: [String] = []
         var files: [String] = []
         var actions: [GitFixAction] = []
 
         switch kind {
+        case .hookRejected:
+            let digest = HookFailure(output: output)
+            details = digest.cleanedOutput
+            highlights = Array(digest.problems.prefix(8))
+            files = hookFiles(digest.paths)
+            let who = digest.hook.map { "The \($0) hook" } ?? "A git hook in this repository"
+            let what = digest.tasks.isEmpty ? "" : " while running \(digest.tasks.map { "“\($0)”" }.joined(separator: ", "))"
+            summary = "\(who) failed\(what), so git didn't \(operation.verb). Nothing was committed; your staged changes and resolved files are untouched. Fix what it reports below and retry, or ask the assistant to work out the fix."
+            actions.append(GitFixAction("Ask AI to diagnose & fix", systemImage: "sparkles", role: .primary) { [weak self] in
+                self?.askAIAboutHookFailure(verb: operation.verb, digest: digest)
+            })
+            actions.append(GitFixAction(files.isEmpty ? "Fix in Changes" : "Fix \(files.count == 1 ? (files[0] as NSString).lastPathComponent : "\(files.count) flagged files") in Changes",
+                                        systemImage: "pencil.and.list.clipboard") { [weak self] in
+                guard let self else { return }
+                if let first = files.first, self.files.contains(where: { $0.path == first }) {
+                    self.inspectFileFromError(first)
+                } else {
+                    self.parkedOperationError = self.operationError
+                    self.operationError = nil
+                    self.activeTab = .changes
+                }
+            })
+            actions.append(GitFixAction("Retry \(operation.verb)", systemImage: "arrow.clockwise") { [weak self] in
+                await self?.retry(operation)
+            })
+            if let skip = operation.runSkippingHooks {
+                actions.append(GitFixAction("\(operation.verb.prefix(1).uppercased() + operation.verb.dropFirst()) without running hooks",
+                                            systemImage: "exclamationmark.shield", role: .destructive,
+                                            confirmation: "Formatters, linters and secret scanners won't run this time. Use it only when the failure isn't about your changes (a broken tool or config, a false positive). A real secret that reaches GitHub has to be rotated, even if you remove it later.") { [weak self] in
+                    await self?.retry(GitRetryableOperation(title: operation.title, verb: operation.verb, success: operation.success, run: skip))
+                })
+            }
         case .localChangesOverwritten(let changed):
             files = changed
             summary = "You have uncommitted changes to \(changed.isEmpty ? "some files" : "\(changed.count) file\(changed.count == 1 ? "" : "s")") that this \(operation.verb) would overwrite. Nothing was changed."
@@ -93,8 +133,9 @@ extension AppState {
             })
         case .conflicts:
             summary = "Git stopped because of conflicting changes. Resolve the conflicted files in Changes and commit, or abort to go back."
-            actions.append(GitFixAction("Resolve in Changes", systemImage: "exclamationmark.triangle", role: .primary) { [weak self] in
-                self?.activeTab = .changes
+            actions.append(GitFixAction("Resolve Conflicts…", systemImage: "arrow.triangle.merge", role: .primary) { [weak self] in
+                self?.refreshAfterExternalChange()
+                self?.openConflictResolver()
             })
             actions.append(GitFixAction("Abort", systemImage: "xmark.circle", role: .destructive,
                                         confirmation: "The in-progress merge, rebase or cherry-pick will be abandoned.") { [weak self] in
@@ -132,7 +173,68 @@ extension AppState {
             self?.activeTab = .terminal
         })
         parkedOperationError = nil
-        operationError = GitOperationError(title: operation.title, summary: summary, details: output, files: files, actions: actions)
+        let retryAction = GitFixAction("Retry \(operation.verb)", systemImage: "arrow.clockwise", role: .primary) { [weak self] in
+            await self?.retry(operation)
+        }
+        operationError = GitOperationError(title: operation.title, summary: summary, details: details, files: files, actions: actions,
+                                           retry: retryAction, showOutput: kind == .hookRejected && highlights.isEmpty,
+                                           highlights: highlights)
+    }
+
+    /// Repo-relative paths named by a hook, keeping only ones that exist here.
+    private func hookFiles(_ paths: [String]) -> [String] {
+        guard let repo = currentRepo else { return [] }
+        let root = repo.path.hasSuffix("/") ? repo.path : repo.path + "/"
+        var result: [String] = []
+        for path in paths {
+            let relative = path.hasPrefix(root) ? String(path.dropFirst(root.count)) : path
+            guard !relative.hasPrefix("/"), !result.contains(relative),
+                  FileManager.default.fileExists(atPath: root + relative) || files.contains(where: { $0.path == relative }) else { continue }
+            result.append(relative)
+        }
+        return result
+    }
+
+    /// Hands a rejected commit to the assistant with the digested hook output; it can read the repo's hook
+    /// config (husky, lint-staged, pre-commit), edit files and stage them.
+    func askAIAboutHookFailure(verb: String, digest: HookFailure) {
+        parkedOperationError = operationError
+        operationError = nil
+        activeTab = .changes
+        let chat = AIChatStore.shared
+        if !chat.isRunning { chat.newChat() }
+        if !chat.isOpen { chat.toggle() }
+        var output = digest.cleanedOutput
+        if output.count > 6000 { output = String(output.prefix(2500)) + "\n…\n" + String(output.suffix(3000)) }
+        var prompt = "A git hook rejected my attempt to \(verb) on branch \(currentBranch)"
+        if let hook = digest.hook { prompt += " (\(hook))" }
+        if !digest.tasks.isEmpty { prompt += "; failing task: \(digest.tasks.joined(separator: ", "))" }
+        prompt += ".\n\nKey lines:\n" + digest.problems.prefix(10).map { "- \($0)" }.joined(separator: "\n")
+        prompt += "\n\nFull hook output:\n```\n\(output)\n```\n\n"
+        prompt += "Find the root cause (read the hook config such as .husky/, lint-staged and prettier settings, .pre-commit-config.yaml as needed), "
+        prompt += "explain it in two lines, apply the smallest safe fix (edit and stage files), then retry: "
+        if operationInProgress == .merge || operationInProgress == .cherryPick || operationInProgress == .revert {
+            prompt += "a \(operationInProgress!.title.lowercased()) is in progress, so conclude it with `git commit --no-edit` (never `-m`, which drops the merge message). "
+        } else if operationInProgress == .rebase {
+            prompt += "a rebase is in progress, so continue it with `git -c core.editor=true rebase --continue`. "
+        } else if !commitSummary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            prompt += "commit again with the message \"\(commitSummary.trimmingCharacters(in: .whitespacesAndNewlines))\". "
+        } else {
+            prompt += "commit again with a message that describes the staged changes. "
+        }
+        prompt += "If the retry fails again, read the new output and keep fixing. Don't bypass hooks unless I ask."
+        if chat.isRunning { chat.input = prompt } else { chat.send(prompt, state: self) }
+    }
+
+    /// Whether commits here run hooks: installed in `.git/hooks`, or managed by husky / pre-commit.
+    private func repoHasHooks() -> Bool {
+        guard let repo = currentRepo else { return false }
+        let fm = FileManager.default
+        let root = repo.path as NSString
+        if fm.fileExists(atPath: root.appendingPathComponent(".husky"))
+            || fm.fileExists(atPath: root.appendingPathComponent(".pre-commit-config.yaml")) { return true }
+        let hooks = (try? fm.contentsOfDirectory(atPath: root.appendingPathComponent(".git/hooks"))) ?? []
+        return hooks.contains { !$0.hasSuffix(".sample") && !$0.hasPrefix(".") }
     }
 
     /// Runs `operation` again; a new failure opens a fresh dialog.

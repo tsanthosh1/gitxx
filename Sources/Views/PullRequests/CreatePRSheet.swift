@@ -314,7 +314,7 @@ struct BranchSuggestField: View {
                     .frame(height: 26)
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.hoverPlain)
             }
         }
         .padding(.vertical, 4)

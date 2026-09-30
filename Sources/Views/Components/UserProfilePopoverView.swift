@@ -10,6 +10,23 @@ public struct UserProfilePopoverView: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Text("Git identity")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button {
+                    openPreferences(PreferenceCategory.general)
+                } label: {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.icon(size: 24))
+                .help("Settings (⌘,)")
+            }
+            .padding(.horizontal, 6)
+
             // Profiles list options
             VStack(spacing: 3) {
                 ForEach(state.gitProfiles) { profile in
@@ -30,32 +47,86 @@ public struct UserProfilePopoverView: View {
             Divider()
                 .padding(.vertical, 2)
 
-            // Footer: Manage in Preferences
-            Button {
-                dismiss()
-                state.initialPreferencesCategory = PreferenceCategory.gitUsers.rawValue
-                state.showSettings = true
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "gearshape")
-                        .font(.system(size: 11))
-                    Text("Manage Profiles in Preferences...")
-                        .font(.system(size: 11, weight: .medium))
-                    Spacer()
+            footerRow("Manage Profiles…", icon: "person.2", hint: nil) {
+                openPreferences(PreferenceCategory.gitUsers)
+            }
+            footerRow("Settings…", icon: "gearshape", hint: "⌘,") {
+                openPreferences(PreferenceCategory.general)
+            }
+        }
+        .padding(10)
+        .frame(width: 320)
+        .themedSurface(state.accentTheme, .elevated)
+    }
+
+    private func openPreferences(_ category: PreferenceCategory) {
+        dismiss()
+        state.initialPreferencesCategory = category.rawValue
+        state.showSettings = true
+    }
+
+    private func footerRow(_ title: String, icon: String, hint: String?, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                    .font(.system(size: 11.5))
+                    .frame(width: 16)
+                Text(title)
+                    .font(.system(size: 12, weight: .medium))
+                Spacer()
+                if let hint {
+                    Text(hint)
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(.tertiary)
+                } else {
                     Image(systemName: "chevron.right")
                         .font(.system(size: 9))
                         .foregroundStyle(.tertiary)
                 }
-                .foregroundStyle(.secondary)
-                .padding(.vertical, 5)
-                .padding(.horizontal, 6)
-                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .padding(.vertical, 6)
+            .padding(.horizontal, 8)
+            .contentShape(Rectangle())
         }
-        .padding(10)
-        .frame(width: 320)
-        .background(.ultraThinMaterial)
+        .buttonStyle(ProfileFooterRowStyle())
+    }
+}
+
+/// Avatar of the active git identity; opens the profile switcher.
+struct ProfileAvatarButton: View {
+    @ObservedObject var state: AppState
+    var size: CGFloat = 28
+    @State private var showPopover = false
+
+    var body: some View {
+        Button { showPopover.toggle() } label: {
+            UserAvatarView(profile: state.activeProfile, size: size)
+        }
+        .buttonStyle(.icon(size: size + 4, cornerRadius: (size + 4) / 2, active: showPopover))
+        .help("Git identity: \(state.activeProfile.name) <\(state.activeProfile.email)>. Click to switch.")
+        .popover(isPresented: $showPopover, arrowEdge: .bottom) {
+            UserProfilePopoverView(state: state)
+        }
+    }
+}
+
+private struct ProfileFooterRowStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        RowBody(configuration: configuration)
+    }
+
+    private struct RowBody: View {
+        let configuration: ButtonStyleConfiguration
+        @State private var hovering = false
+
+        var body: some View {
+            configuration.label
+                .background(Color.primary.opacity(configuration.isPressed ? 0.12 : (hovering ? 0.07 : 0)),
+                            in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .onHover { hovering = $0 }
+                .pointerCursor()
+        }
     }
 }
 
@@ -137,7 +208,7 @@ private struct ProfileOptionRow: View {
             )
             .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.hoverPlain)
         .onHover { isHovered = $0 }
     }
 }

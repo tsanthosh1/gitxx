@@ -107,7 +107,7 @@ public struct RepositoryPickerSheet: View {
             .padding(.vertical, 4)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.hoverPlain)
     }
 
     private func chooseFolderAndOpen() {

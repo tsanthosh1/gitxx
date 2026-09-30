@@ -16,6 +16,8 @@ public struct PRConversationWebView: NSViewRepresentable {
     public var onChromeHidden: (@MainActor (Bool) -> Void)?
     public var openNavPanel: Bool = false
     public var onNavPanelOpened: (@MainActor () -> Void)?
+    /// The PR's head branch is checked out in the open repository.
+    public var headCheckedOut: Bool = false
 
     public init(
         pr: PullRequest,
@@ -29,7 +31,8 @@ public struct PRConversationWebView: NSViewRepresentable {
         topInset: CGFloat = 0,
         onChromeHidden: (@MainActor (Bool) -> Void)? = nil,
         openNavPanel: Bool = false,
-        onNavPanelOpened: (@MainActor () -> Void)? = nil
+        onNavPanelOpened: (@MainActor () -> Void)? = nil,
+        headCheckedOut: Bool = false
     ) {
         self.pr = pr
         self.timeline = timeline
@@ -43,6 +46,7 @@ public struct PRConversationWebView: NSViewRepresentable {
         self.onChromeHidden = onChromeHidden
         self.openNavPanel = openNavPanel
         self.onNavPanelOpened = onNavPanelOpened
+        self.headCheckedOut = headCheckedOut
     }
 
     /// Cheap fingerprint of every render input, so SwiftUI updates unrelated to the PR skip HTML generation entirely.
@@ -53,6 +57,7 @@ public struct PRConversationWebView: NSViewRepresentable {
         hasher.combine(checks)
         hasher.combine(filter)
         hasher.combine(meta)
+        hasher.combine(headCheckedOut)
         return hasher.finalize()
     }
 
@@ -79,7 +84,7 @@ public struct PRConversationWebView: NSViewRepresentable {
         context.coordinator.appliedInsetForInitialLoad(topInset)
         context.coordinator.installScrollForwarding()
         context.coordinator.lastRenderKey = renderKey
-        let html = ConversationHTMLBuilder.buildHTML(pr: pr, timeline: timeline, checks: checks, filter: filter, meta: meta)
+        let html = ConversationHTMLBuilder.buildHTML(pr: pr, timeline: timeline, checks: checks, filter: filter, meta: meta, headCheckedOut: headCheckedOut)
         context.coordinator.lastLoadedHTML = html
         webView.loadHTMLString(html, baseURL: nil)
 
@@ -97,7 +102,7 @@ public struct PRConversationWebView: NSViewRepresentable {
         let key = renderKey
         if coordinator.lastRenderKey != key {
             coordinator.lastRenderKey = key
-            let newHTML = ConversationHTMLBuilder.buildHTML(pr: pr, timeline: timeline, checks: checks, filter: filter, meta: meta)
+            let newHTML = ConversationHTMLBuilder.buildHTML(pr: pr, timeline: timeline, checks: checks, filter: filter, meta: meta, headCheckedOut: headCheckedOut)
             if coordinator.lastLoadedHTML != newHTML {
                 coordinator.lastLoadedHTML = newHTML
                 coordinator.reloadPreservingState(newHTML)
@@ -116,7 +121,21 @@ public struct PRConversationWebView: NSViewRepresentable {
     @MainActor
     public class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         var parent: PRConversationWebView
-        weak var webView: WKWebView?
+        weak var webView: WKWebView? {
+            didSet {
+                guard chromeRevealObserver == nil, let webView else { return }
+                chromeRevealObserver = NotificationCenter.default.addObserver(forName: .gitxxShowPRChrome, object: nil, queue: .main) { [weak webView] _ in
+                    MainActor.assumeIsolated {
+                        _ = webView?.evaluateJavaScript("window.gitxxShowChrome && window.gitxxShowChrome()", completionHandler: nil)
+                    }
+                }
+            }
+        }
+        nonisolated(unsafe) private var chromeRevealObserver: NSObjectProtocol?
+
+        deinit {
+            if let chromeRevealObserver { NotificationCenter.default.removeObserver(chromeRevealObserver) }
+        }
         var lastLoadedHTML: String = ""
         var lastRenderKey: Int = 0
 
@@ -172,7 +191,8 @@ public struct PRConversationWebView: NSViewRepresentable {
                 let point = webView.convert(event.locationInWindow, from: nil)
                 guard webView.bounds.contains(point),
                       let hit = window.contentView?.hitTest(event.locationInWindow),
-                      !hit.isDescendant(of: webView) else { return event }
+                      !hit.isDescendant(of: webView),
+                      WebScrollForwarding.shouldForward(hit: hit) else { return event }
                 webView.scrollWheel(with: event)
                 return nil
             }
@@ -246,7 +266,11 @@ public struct PRConversationWebView: NSViewRepresentable {
         ) {
             if navigationAction.navigationType == .linkActivated {
                 if let url = navigationAction.request.url, ["http", "https", "mailto"].contains(url.scheme?.lowercased() ?? "") {
-                    NSWorkspace.shared.open(url)
+                    if case .actionsRun = GitHubURLTarget.parse(url.absoluteString)?.kind {
+                        NotificationCenter.default.post(name: NSNotification.Name("OpenGitHubLinkInApp"), object: url)
+                    } else {
+                        NSWorkspace.shared.open(url)
+                    }
                 }
                 decisionHandler(.cancel)
                 return
@@ -310,8 +334,23 @@ public struct PRConversationWebView: NSViewRepresentable {
                 return (body["path"] as? String).map { .openFile(path: $0) }
             case "openReview":
                 return .openReviewModal
+            case "openCheckRun":
+                guard let runId = (body["runId"] as? NSNumber)?.intValue else { return nil }
+                return .openCheckRun(runId: runId, jobId: (body["jobId"] as? NSNumber)?.intValue)
+            case "showPRActions":
+                return .showPRActions
+            case "explainCheck":
+                return (body["name"] as? String).map { .explainCheck(name: $0) }
             case "refresh":
                 return .refresh
+            case "resolveConflictsLocally":
+                return .resolveConflictsLocally
+            case "updateDescription":
+                return (body["body"] as? String).map { .updateDescription(body: $0) }
+            case "aiEditDescription":
+                return (body["instruction"] as? String).map { .aiEditDescription(instruction: $0) }
+            case "openDescriptionInChat":
+                return .openDescriptionInChat(instruction: (body["instruction"] as? String) ?? "")
             case "switchTab":
                 switch body["tab"] as? String {
                 case "files": return .switchTab(.filesChanged)

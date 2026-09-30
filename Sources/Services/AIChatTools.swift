@@ -32,11 +32,16 @@ public enum AIChatTools {
             parametersJSON: #"{"type":"object","properties":{"path":{"type":"string","description":"Path relative to the repository root"},"start_line":{"type":"integer"},"end_line":{"type":"integer"}},"required":["path"]}"#
         ),
         AIToolSpec(
+            name: "edit_file",
+            description: "Edit a text file in the current repository's working tree by replacing old_string (must occur exactly once; include enough surrounding lines to make it unique) with new_string. To create a new file, pass an empty old_string and the whole content as new_string. Read the file first.",
+            parametersJSON: #"{"type":"object","properties":{"path":{"type":"string","description":"Path relative to the repository root"},"old_string":{"type":"string"},"new_string":{"type":"string"}},"required":["path","old_string","new_string"]}"#
+        ),
+        AIToolSpec(
             name: "open_pull_request",
             description: "Open a pull request of the current repository in GitXX so the user can see it.",
             parametersJSON: #"{"type":"object","properties":{"number":{"type":"integer"}},"required":["number"]}"#
         ),
-    ]
+    ] + AIChatCITools.specs + AIAppActions.specs
 
     // MARK: Arguments
 
@@ -66,6 +71,20 @@ public enum AIChatTools {
             if let s = args["start_line"] as? Int { return "read \(path):\(s)-\(args["end_line"] as? Int ?? s + 399)" }
             return "read \(path)"
         case "open_pull_request": return "open PR #\(args["number"] as? Int ?? 0)"
+        case "edit_file":
+            let path = args["path"] as? String ?? ""
+            let old = (args["old_string"] as? String) ?? "", new = (args["new_string"] as? String) ?? ""
+            func preview(_ text: String, _ mark: String) -> [String] {
+                let lines = text.components(separatedBy: "\n")
+                return lines.prefix(30).map { mark + $0 } + (lines.count > 30 ? ["\(mark)… \(lines.count - 30) more lines"] : [])
+            }
+            let diff = (old.isEmpty ? [] : preview(old, "- ")) + preview(new, "+ ")
+            return ([old.isEmpty ? "create \(path)" : "edit \(path)"] + diff).joined(separator: "\n")
+        case _ where AIAppActions.names.contains(name): return AIAppActions.summary(name: name, args: args)
+        case "get_pr_checks": return "checks of PR #\(args["number"] ?? "?")"
+        case "get_ci_logs":
+            let target = args["job_id"].map { "job \($0)" } ?? args["run_id"].map { "run \($0)" } ?? args["pr_number"].map { "failed jobs of PR #\($0)" } ?? "?"
+            return "CI logs of \(target)" + ((args["grep"] as? String).map { " matching /\($0)/" } ?? "")
         default: return name
         }
     }
@@ -80,8 +99,10 @@ public enum AIChatTools {
 
     public static func requiresApproval(name: String, args: [String: Any]) -> Bool {
         switch name {
-        case "read_file", "open_pull_request":
+        case "read_file", "open_pull_request", "get_pr_checks", "get_ci_logs", "list_repositories":
             return false
+        case "app_action":
+            return AIAppActions.requiresApproval(args: args)
         case "run_git":
             let a = stringArgs(args).filter { $0 != "--no-pager" }
             guard let cmd = a.first else { return false }
@@ -148,12 +169,21 @@ public enum AIChatTools {
             }
             var env = ["GH_PROMPT_DISABLED": "1", "GH_NO_UPDATE_NOTIFIER": "1", "NO_COLOR": "1", "GH_PAGER": "cat", "PAGER": "cat"]
             if let token = context.githubToken, !token.isEmpty { env["GH_TOKEN"] = token }
-            let res = await runProcess(gh, stringArgs(args), cwd: context.repoPath ?? NSHomeDirectory(), env: env)
+            let ghArgs = stringArgs(args)
+            let res = await runProcess(gh, ghArgs, cwd: context.repoPath ?? NSHomeDirectory(), env: env)
+            // `gh pr checks` exits 1 when a check failed and 8 while checks are pending; the listing is still valid.
+            if ghArgs.prefix(2) == ["pr", "checks"], [1, 8].contains(res.code), !res.out.isEmpty {
+                return (truncate((res.code == 1 ? "Some checks failed:\n" : "Some checks are pending:\n") + res.out), true)
+            }
             return (format(res), res.code == 0)
         case "github_api":
             return await callGitHubAPI(args, token: context.githubToken)
         case "read_file":
             return readFile(args, repoPath: context.repoPath)
+        case "edit_file":
+            return editFile(args, repoPath: context.repoPath)
+        case _ where AIChatCITools.names.contains(name):
+            return await AIChatCITools.execute(name: name, args: args, context: context)
         default:
             return ("Unknown tool \(name).", false)
         }
@@ -173,8 +203,64 @@ public enum AIChatTools {
         text.count > maxOutput ? String(text.prefix(maxOutput)) + "\n…[output truncated]" : text
     }
 
+    /// The running process, so cancelling the chat (Stop) can kill it together with hooks it spawned.
+    private final class RunningProcess: @unchecked Sendable {
+        private let lock = NSLock()
+        private var process: Process?
+        private var cancelled = false
+
+        /// Returns false when the run was already cancelled.
+        func attach(_ process: Process) -> Bool {
+            lock.lock(); defer { lock.unlock() }
+            self.process = process
+            return !cancelled
+        }
+
+        func cancel() {
+            lock.lock()
+            cancelled = true
+            let target = process
+            lock.unlock()
+            guard let target, target.isRunning else { return }
+            Self.killTree(target.processIdentifier)
+        }
+
+        /// SIGTERM to the process and every descendant (git → husky → npx → prettier…), children first.
+        static func killTree(_ root: pid_t) {
+            let ps = Process()
+            ps.executableURL = URL(fileURLWithPath: "/bin/ps")
+            ps.arguments = ["-A", "-o", "pid=,ppid="]
+            let pipe = Pipe()
+            ps.standardOutput = pipe
+            ps.standardError = FileHandle.nullDevice
+            var children: [pid_t: [pid_t]] = [:]
+            if (try? ps.run()) != nil {
+                let text = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+                ps.waitUntilExit()
+                for line in text.split(separator: "\n") {
+                    let parts = line.split(separator: " ").compactMap { pid_t($0) }
+                    if parts.count == 2 { children[parts[1], default: []].append(parts[0]) }
+                }
+            }
+            func visit(_ pid: pid_t) {
+                for child in children[pid] ?? [] { visit(child) }
+                kill(pid, SIGTERM)
+            }
+            visit(root)
+        }
+    }
+
+    /// Commands that run hooks or talk to a remote get longer than the default 90 s.
+    private static func timeout(for arguments: [String]) -> TimeInterval {
+        let slow: Set<String> = ["commit", "merge", "rebase", "cherry-pick", "revert", "push", "pull", "fetch", "clone"]
+        return arguments.contains { slow.contains($0) } ? 900 : 90
+    }
+
     private static func runProcess(_ executable: String, _ arguments: [String], cwd: String, env extra: [String: String]) async -> (code: Int32, out: String, err: String) {
-        await withCheckedContinuation { continuation in
+        let running = RunningProcess()
+        let limit = timeout(for: arguments)
+        return await withTaskCancellationHandler {
+          await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 let process = Process()
                 process.executableURL = URL(fileURLWithPath: executable)
@@ -190,12 +276,16 @@ public enum AIChatTools {
                 process.standardOutput = out
                 process.standardError = err
                 process.standardInput = FileHandle.nullDevice
+                guard running.attach(process) else {
+                    continuation.resume(returning: (130, "", "Stopped by the user."))
+                    return
+                }
                 do { try process.run() } catch {
                     continuation.resume(returning: (127, "", error.localizedDescription))
                     return
                 }
-                let timeout = DispatchWorkItem { if process.isRunning { process.terminate() } }
-                DispatchQueue.global().asyncAfter(deadline: .now() + 90, execute: timeout)
+                let timeout = DispatchWorkItem { if process.isRunning { RunningProcess.killTree(process.processIdentifier) } }
+                DispatchQueue.global().asyncAfter(deadline: .now() + limit, execute: timeout)
                 let outData = out.fileHandleForReading.readDataToEndOfFile()
                 let errData = err.fileHandleForReading.readDataToEndOfFile()
                 process.waitUntilExit()
@@ -204,6 +294,9 @@ public enum AIChatTools {
                                                 String(decoding: outData, as: UTF8.self),
                                                 String(decoding: errData, as: UTF8.self)))
             }
+          }
+        } onCancel: {
+            running.cancel()
         }
     }
 
@@ -236,6 +329,37 @@ public enum AIChatTools {
         } catch {
             return ("Request failed: \(error.localizedDescription)", false)
         }
+    }
+
+    private static func resolve(_ rel: String, in repoPath: String) -> String? {
+        let root = URL(fileURLWithPath: repoPath).standardizedFileURL.path
+        let full = URL(fileURLWithPath: rel, relativeTo: URL(fileURLWithPath: repoPath + "/")).standardizedFileURL.path
+        guard full.hasPrefix(root + "/"), !full.hasPrefix(root + "/.git/") else { return nil }
+        return full
+    }
+
+    private static func editFile(_ args: [String: Any], repoPath: String?) -> (output: String, ok: Bool) {
+        guard let repoPath, let rel = args["path"] as? String else { return ("No repository is open.", false) }
+        guard let full = resolve(rel, in: repoPath) else { return ("Path is outside the repository.", false) }
+        let old = args["old_string"] as? String ?? "", new = args["new_string"] as? String ?? ""
+        let fm = FileManager.default
+        if old.isEmpty {
+            guard !fm.fileExists(atPath: full) else { return ("\(rel) already exists; pass old_string to edit it.", false) }
+            do {
+                try fm.createDirectory(atPath: (full as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+                try new.write(toFile: full, atomically: true, encoding: .utf8)
+            } catch { return ("Couldn't create \(rel): \(error.localizedDescription)", false) }
+            return ("Created \(rel) (\(new.components(separatedBy: "\n").count) lines).", true)
+        }
+        guard let text = try? String(contentsOfFile: full, encoding: .utf8) else { return ("Couldn't read \(rel) as UTF-8 text.", false) }
+        let count = text.components(separatedBy: old).count - 1
+        guard count == 1 else {
+            return (count == 0 ? "old_string not found in \(rel). Read the file again and copy the text exactly." : "old_string occurs \(count) times in \(rel); include more surrounding lines.", false)
+        }
+        do { try text.replacingOccurrences(of: old, with: new).write(toFile: full, atomically: true, encoding: .utf8) }
+        catch { return ("Couldn't write \(rel): \(error.localizedDescription)", false) }
+        let line = text.components(separatedBy: old)[0].components(separatedBy: "\n").count
+        return ("Edited \(rel) at line \(line): replaced \(old.components(separatedBy: "\n").count) lines with \(new.components(separatedBy: "\n").count).", true)
     }
 
     private static func readFile(_ args: [String: Any], repoPath: String?) -> (output: String, ok: Bool) {

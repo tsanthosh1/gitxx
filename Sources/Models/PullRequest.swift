@@ -21,8 +21,8 @@ public final class PRDateFormatterHelper: @unchecked Sendable {
 public enum PRDetailTab: String, CaseIterable, Identifiable, Codable, Sendable {
     case overview = "Overview"
     case commits = "Commits"
-    case filesChanged = "Files Changed"
     case checks = "Checks"
+    case filesChanged = "Files Changed"
     public var id: String { rawValue }
 }
 
@@ -588,8 +588,10 @@ public struct PRCheckRun: Identifiable, Hashable, Codable, Sendable {
     }
 
     /// GitHub Actions run / job ids parsed from `.../actions/runs/{run}/job/{job}` URLs.
-    public var actionsRunId: String? { Self.pathComponent(after: "runs", in: htmlUrl) }
-    public var actionsJobId: String? { Self.pathComponent(after: "job", in: htmlUrl) }
+    public var actionsRunId: String? { isActionsURL ? Self.pathComponent(after: "runs", in: htmlUrl) : nil }
+    public var actionsJobId: String? { isActionsURL ? Self.pathComponent(after: "job", in: htmlUrl) : nil }
+    /// Only `/actions/runs/...` links are Actions runs; `/runs/{id}` is a plain check-run page (e.g. SonarCloud).
+    private var isActionsURL: Bool { htmlUrl?.contains("/actions/runs/") == true }
 
     public var isRerunnable: Bool {
         isFailure && actionsJobId != nil
@@ -715,6 +717,11 @@ public struct PRDetailMeta: Hashable, Codable, Sendable {
     public var participants: [PRReviewerStatus]? = nil
     /// APPROVED, CHANGES_REQUESTED, REVIEW_REQUIRED, or nil when reviews are not required.
     public var reviewDecision: String? = nil
+    /// GraphQL `mergeStateStatus`: CLEAN, BLOCKED, BEHIND, DIRTY, UNSTABLE, HAS_HOOKS, DRAFT, UNKNOWN.
+    public var mergeStateStatus: String? = nil
+    /// `baseRef.refUpdateRule.viewerCanPush`; false means branch protection restricts who can merge.
+    public var viewerCanPushToBase: Bool? = nil
+    public var requiredApprovingReviewCount: Int? = nil
     public let viewerLogin: String?
     public let viewerPermission: String?   // ADMIN, MAINTAIN, WRITE, TRIAGE, READ
     public let viewerDidAuthor: Bool
@@ -774,6 +781,8 @@ public struct PRMergeReadiness: Sendable {
     public let totalThreads: Int
     public let resolutionKnown: Bool
     public let isReviewBlocked: Bool
+    public var isPushRestricted: Bool = false
+    public var reviewVerdict: ReviewVerdict = .pending
 
     public var isMergeBlocked: Bool { status == .blocked || status == .pending }
 
@@ -790,7 +799,8 @@ public struct PRMergeReadiness: Sendable {
     public static func evaluate(
         pr: PullRequest,
         checks: [PRCheckRun],
-        timeline: [PRTimelineItem]
+        timeline: [PRTimelineItem],
+        meta: PRDetailMeta? = nil
     ) -> PRMergeReadiness {
         let failedRequired = checks.filter { $0.isFailure && $0.isRequired }.count
         let failedOptional = checks.filter { $0.isFailure && !$0.isRequired }.count
@@ -805,20 +815,30 @@ public struct PRMergeReadiness: Sendable {
         }
         let resolutionKnown = threads.allSatisfy(\.isResolutionKnown)
         let unresolved = resolutionKnown ? threads.filter { !$0.isResolved }.count : 0
-        let isReviewBlocked = pr.reviewVerdict == .changesRequested || (pr.isBlocked && pr.reviewVerdict == .pending)
+        let meta = meta?.prNumber == pr.number ? meta : nil
+        let verdict = effectiveReviewVerdict(pr: pr, meta: meta)
+        let isReviewBlocked: Bool
+        switch meta?.reviewDecision {
+        case "APPROVED": isReviewBlocked = false
+        case "CHANGES_REQUESTED", "REVIEW_REQUIRED": isReviewBlocked = true
+        default: isReviewBlocked = verdict == .changesRequested || (pr.isBlocked && verdict == .pending)
+        }
+        let pushRestricted = meta?.viewerCanPushToBase == false
 
         var blockers: [String] = []
         if pr.isDraft { blockers.append("Draft") }
         if pr.hasConflicts { blockers.append("Merge conflicts") }
         if failedRequired > 0 { blockers.append("\(failedRequired) required check\(failedRequired == 1 ? "" : "s") failing") }
-        if pr.reviewVerdict == .changesRequested {
+        if verdict == .changesRequested {
             blockers.append("Changes requested")
         } else if isReviewBlocked {
             blockers.append("Approval required")
         }
         if unresolved > 0 { blockers.append("\(unresolved) unresolved conversation\(unresolved == 1 ? "" : "s")") }
         if pr.isBehind { blockers.append("Behind base branch") }
-        if blockers.isEmpty && pr.isBlocked && pendingRequired == 0 { blockers.append("Branch protection requirements unmet") }
+        if pushRestricted { blockers.append("You're not authorized to push to this branch") }
+        let stateBlocked = meta?.mergeStateStatus.map { $0 == "BLOCKED" } ?? pr.isBlocked
+        if blockers.isEmpty && stateBlocked && pendingRequired == 0 { blockers.append("Branch protection requirements unmet") }
 
         let status: Status
         switch pr.state {
@@ -842,8 +862,24 @@ public struct PRMergeReadiness: Sendable {
             unresolvedThreads: unresolved,
             totalThreads: threads.count,
             resolutionKnown: resolutionKnown,
-            isReviewBlocked: isReviewBlocked
+            isReviewBlocked: isReviewBlocked,
+            isPushRestricted: pushRestricted,
+            reviewVerdict: verdict
         )
+    }
+
+    /// GitHub's `reviewDecision` wins over the list row's cached verdict, which can lag behind new reviews.
+    public static func effectiveReviewVerdict(pr: PullRequest, meta: PRDetailMeta?) -> ReviewVerdict {
+        guard let meta, meta.prNumber == pr.number else { return pr.reviewVerdict }
+        switch meta.reviewDecision {
+        case "APPROVED": return .approved
+        case "CHANGES_REQUESTED": return .changesRequested
+        case "REVIEW_REQUIRED": return .pending
+        default:
+            if meta.reviewers.contains(where: { $0.state == "CHANGES_REQUESTED" }) { return .changesRequested }
+            if meta.reviewers.contains(where: { $0.state == "APPROVED" }) { return .approved }
+            return pr.reviewVerdict
+        }
     }
 }
 

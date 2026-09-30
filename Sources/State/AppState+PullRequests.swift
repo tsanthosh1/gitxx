@@ -19,6 +19,13 @@ public enum PRWebAction: Sendable {
     case openReviewModal
     case refresh
     case switchTab(PRDetailTab)
+    case updateDescription(body: String)
+    case aiEditDescription(instruction: String)
+    case openDescriptionInChat(instruction: String)
+    case openCheckRun(runId: Int, jobId: Int?)
+    case showPRActions
+    case explainCheck(name: String)
+    case resolveConflictsLocally
 }
 
 public struct PRRepoContext: Sendable {
@@ -444,11 +451,188 @@ extension AppState {
                 refreshSelectedPR()
             case .switchTab(let tab):
                 selectedPRTab = tab
+            case .updateDescription(let body):
+                do {
+                    try await updateSelectedPRDescription(newBody: body)
+                } catch {
+                    showToast("Couldn't update the description: \(error.localizedDescription)", type: .error)
+                    throw error
+                }
+            case .aiEditDescription(let instruction):
+                try await rewriteSelectedPRDescriptionWithAI(instruction: instruction)
+            case .openDescriptionInChat(let instruction):
+                openPRDescriptionInChat(instruction: instruction)
+            case .openCheckRun(let runId, let jobId):
+                openActionsRun(runId: runId, jobId: jobId)
+            case .showPRActions:
+                showActions(branch: selectedPR?.headBranch)
+                recordNavigationStep()
+            case .explainCheck(let name):
+                explainFailedCheck(name)
+            case .resolveConflictsLocally:
+                try await updateSelectedPRBranchLocally()
             }
             return true
         } catch {
             return false
         }
+    }
+
+    // MARK: - AI description edits
+
+    /// Rewrites the PR body with a single model call and saves it.
+    func rewriteSelectedPRDescriptionWithAI(instruction: String) async throws {
+        guard let pr = selectedPR else { return }
+        let ask = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !ask.isEmpty else { return }
+        let system = """
+        You edit GitHub pull request descriptions. Apply the user's instruction to the current description and \
+        return ONLY the complete new description in GitHub-flavored Markdown: no preamble, no explanation, no code fence \
+        around the whole answer. Keep the existing template structure (headings, checklists, links) unless the \
+        instruction says otherwise. Never invent facts that the commits or files don't support.
+        """
+        var context = """
+        PR #\(pr.number): \(pr.title)
+        Base: \(pr.baseBranch) ← Head: \(pr.headBranch)
+        """
+        let commits = prCommits.prefix(40).map { "- \($0.message.split(separator: "\n").first.map(String.init) ?? "")" }
+        if !commits.isEmpty { context += "\n\nCommits:\n" + commits.joined(separator: "\n") }
+        let files = prFiles.prefix(80).map { "- \($0.filename) (+\($0.additions) -\($0.deletions))" }
+        if !files.isEmpty { context += "\n\nChanged files:\n" + files.joined(separator: "\n") }
+        let user = """
+        \(context)
+
+        Current description:
+        <<<
+        \(pr.body)
+        >>>
+
+        Instruction: \(ask)
+        """
+        let reply: AIChatReply
+        do {
+            reply = try await AIChatService.complete(provider: aiProvider, model: copilotModel.rawValue, githubToken: effectiveGitHubToken,
+                                                     messages: [.system(system), .user(user)], tools: [])
+        } catch {
+            showToast("AI edit failed: \(error.localizedDescription)", type: .error)
+            throw error
+        }
+        let body = Self.stripOuterFence(reply.content ?? "")
+        guard !body.isEmpty else {
+            showToast("The AI returned an empty description; nothing was changed.", type: .info)
+            throw NSError(domain: "GitXX", code: 422)
+        }
+        do {
+            try await updateSelectedPRDescription(newBody: body)
+        } catch {
+            showToast("Couldn't update the description: \(error.localizedDescription)", type: .error)
+            throw error
+        }
+    }
+
+    /// Whether the selected PR's head branch is checked out here, so its base can be merged in locally.
+    public var selectedPRIsCheckedOut: Bool {
+        guard let pr = selectedPR, currentRepo != nil else { return false }
+        return pr.headBranch == currentBranch
+    }
+
+    /// Merges the PR's base into its checked-out head branch. A clean merge is pushed right away;
+    /// conflicts open the resolver, which pushes once the merge is concluded.
+    func updateSelectedPRBranchLocally() async throws {
+        guard let pr = selectedPR, let repo = currentRepo, let ctx = prRepoContext() else { return }
+        struct Failure: Error {}
+        guard selectedPRIsCheckedOut else {
+            showToast("Check out \(pr.headBranch) first to resolve its conflicts locally", type: .info)
+            throw Failure()
+        }
+        guard gitOperationInFlight == nil else {
+            showToast("Another git operation is still running", type: .info)
+            throw Failure()
+        }
+        let path = repo.path
+        let status = try await gitService.execute(arguments: ["status", "--porcelain=v1", "-uno"], in: path)
+        guard status.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            showToast("Commit or stash your local changes before updating \(pr.headBranch)", type: .error)
+            throw Failure()
+        }
+
+        gitOperationInFlight = "merge"
+        defer { gitOperationInFlight = nil }
+        let remote = await baseRemote(in: path, owner: ctx.owner, repo: ctx.repo)
+        let fetch = try await gitService.execute(arguments: ["fetch", remote, pr.baseBranch], in: path)
+        guard fetch.isSuccess else {
+            showToast("Couldn't fetch \(remote)/\(pr.baseBranch): \(Self.firstLine(fetch.stderr))", type: .error)
+            throw Failure()
+        }
+        let merge = try await gitService.execute(
+            arguments: ["merge", "--no-edit", "-m", "Merge \(remote)/\(pr.baseBranch) into \(pr.headBranch)", "FETCH_HEAD"],
+            in: path)
+        await refreshRepoAsync(silent: false)
+        if merge.isSuccess {
+            if merge.stdout.contains("Already up to date") {
+                showToast("\(pr.headBranch) already contains \(pr.baseBranch). Push it if GitHub still shows conflicts.", type: .info)
+            } else {
+                showToast("Merged \(pr.baseBranch) cleanly. Pushing to update #\(pr.number)…", type: .success)
+                pushOrigin()
+            }
+            return
+        }
+        guard !conflictedPaths.isEmpty else {
+            showToast("Merge failed: \(Self.firstLine(merge.stderr.isEmpty ? merge.stdout : merge.stderr))", type: .error)
+            throw Failure()
+        }
+        pendingPRMergePush = "#\(pr.number)"
+        openConflictResolver()
+    }
+
+    /// The remote pointing at the PR's GitHub repository, falling back to `origin`.
+    private func baseRemote(in path: String, owner: String, repo: String) async -> String {
+        let remotes = (try? await gitService.execute(arguments: ["remote", "-v"], in: path))?.stdout ?? ""
+        for line in remotes.split(separator: "\n") {
+            let parts = line.split(whereSeparator: \.isWhitespace)
+            guard parts.count >= 2,
+                  let parsed = gitHubService.parseRepoOwnerAndName(from: String(parts[1])),
+                  parsed.owner.lowercased() == owner.lowercased(), parsed.name.lowercased() == repo.lowercased() else { continue }
+            return String(parts[0])
+        }
+        return "origin"
+    }
+
+    private static func firstLine(_ text: String) -> String {
+        text.split(separator: "\n").first.map { String($0).trimmingCharacters(in: .whitespaces) } ?? "unknown error"
+    }
+
+    /// Hands a failing check to the assistant, which reads its logs with the CI tools.
+    func explainFailedCheck(_ name: String) {
+        guard let pr = selectedPR else { return }
+        let chat = AIChatStore.shared
+        if !chat.isRunning { chat.newChat() }
+        if !chat.isOpen { chat.toggle() }
+        let prompt = "Why did the check “\(name)” fail on PR #\(pr.number)? Read its logs, then give the root cause and the fix."
+        if chat.isRunning { chat.input = prompt } else { chat.send(prompt, state: self) }
+    }
+
+    func openPRDescriptionInChat(instruction: String) {
+        guard let pr = selectedPR else { return }
+        let chat = AIChatStore.shared
+        let ask = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !chat.isRunning { chat.newChat() }
+        if !chat.isOpen { chat.toggle() }
+        let prompt = "Update the description of PR #\(pr.number) (\(pr.title))"
+        if ask.isEmpty || chat.isRunning {
+            chat.input = prompt + (ask.isEmpty ? ": " : ": \(ask)")
+        } else {
+            chat.send(prompt + ": \(ask)", state: self)
+        }
+    }
+
+    private static func stripOuterFence(_ text: String) -> String {
+        var t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard t.hasPrefix("```"), t.hasSuffix("```"), t.count > 6 else { return t }
+        if let firstNewline = t.firstIndex(of: "\n") {
+            t = String(t[t.index(after: firstNewline)...].dropLast(3))
+        }
+        return t.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 

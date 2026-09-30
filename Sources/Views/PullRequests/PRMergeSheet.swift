@@ -20,7 +20,7 @@ public struct PRMergeSheet: View {
 
     public var body: some View {
         if let pr = state.selectedPR {
-            let readiness = PRMergeReadiness.evaluate(pr: pr, checks: state.prChecks, timeline: state.prTimeline)
+            let readiness = PRMergeReadiness.evaluate(pr: pr, checks: state.prChecks, timeline: state.prTimeline, meta: state.prMeta)
             VStack(spacing: 0) {
                 HStack(spacing: 10) {
                     Image(systemName: "arrow.triangle.merge")

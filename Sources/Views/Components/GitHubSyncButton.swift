@@ -170,7 +170,7 @@ private struct LiquidGlassSyncButton: View {
                 .animation(.easeInOut(duration: 0.12), value: isHovered)
             }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.hoverPlain)
         .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         .onHover { isHovered = $0 }
         .help(helpText)

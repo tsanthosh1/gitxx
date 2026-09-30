@@ -17,6 +17,9 @@ struct HomeView: View {
                     .opacity(state.homeTab == .repositories ? 1 : 0)
                     .allowsHitTesting(state.homeTab == .repositories)
                     .accessibilityHidden(state.homeTab != .repositories)
+                if state.homeTab == .conversations {
+                    HomeConversationsView(state: state)
+                }
                 if pullRequestsBuilt || state.homeTab == .pullRequests {
                     HomePullRequestsView(state: state)
                         .opacity(state.homeTab == .pullRequests ? 1 : 0)
@@ -55,13 +58,16 @@ struct HomeView: View {
                         HStack(spacing: 6) {
                             if tab == .pullRequests {
                                 PullRequestGlyph(size: 12, color: selected ? .primary : .secondary)
+                            } else if tab == .conversations {
+                                Image(systemName: "bubble.left.and.text.bubble.right")
+                                    .font(.system(size: 11.5))
                             } else {
                                 Image(systemName: "book.closed")
                                     .font(.system(size: 11.5))
                             }
                             Text(tab.rawValue)
                                 .font(.system(size: 12.5, weight: selected ? .semibold : .medium))
-                            Text(tab == .repositories ? "⌘1" : "⌘2")
+                            Text(tab == .repositories ? "⌘1" : (tab == .pullRequests ? "⌘2" : "⌘3"))
                                 .font(.system(size: 10, weight: .medium, design: .monospaced))
                                 .foregroundStyle(.tertiary)
                             if tab == .pullRequests, state.myPullRequestsOpen, !state.myPullRequests.isEmpty {
@@ -80,7 +86,7 @@ struct HomeView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 7))
                         .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.hoverPlain)
                 }
             }
             .padding(3)
@@ -89,7 +95,7 @@ struct HomeView: View {
 
             Spacer()
 
-            Group {
+            HStack(spacing: 10) {
                 if let repo = state.currentRepo {
                     Button {
                         state.showHome = false
@@ -100,12 +106,13 @@ struct HomeView: View {
                     .buttonStyle(PRActionButtonStyle(.secondary, size: .compact))
                     .help("Return to \(repo.path)")
                 }
+                ProfileAvatarButton(state: state, size: 28)
             }
-            .frame(width: 200, alignment: .trailing)
+            .frame(width: 240, alignment: .trailing)
         }
         .padding(.horizontal, 18)
         .frame(height: 52)
-        .background(.ultraThinMaterial)
+        .themedSurface(state.accentTheme, .toolbar)
     }
 }
 
@@ -264,7 +271,7 @@ private struct HomeRepositoryRow: View {
                     .background(Color.green.opacity(0.1))
                     .clipShape(Capsule())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.hoverPlain)
                 .help("Show your open pull requests in \(slug)")
             }
             Image(systemName: "chevron.right")
@@ -318,7 +325,7 @@ private struct HomePullRequestsView: View {
         HStack(spacing: 0) {
             sidebar
                 .frame(width: 270)
-                .background(.regularMaterial)
+                .themedSurface(state.accentTheme, .sidebar)
             Divider()
             list
         }
@@ -389,7 +396,7 @@ private struct HomePullRequestsView: View {
             .clipShape(RoundedRectangle(cornerRadius: 6))
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.hoverPlain)
         .help(local ? label : "\(label) isn't cloned locally — its PRs open in the browser")
     }
 

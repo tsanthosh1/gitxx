@@ -24,6 +24,14 @@ if [ -f "bin/gitxx" ]; then
     chmod +x "$RESOURCES_DIR/bin/gitxx"
 fi
 
+# App icon (regenerated from assets/AppIcon-source.png when the source is newer)
+if [ -f "assets/AppIcon-source.png" ] && [ "assets/AppIcon-source.png" -nt "assets/AppIcon.icns" ]; then
+    swift scripts/make-icon.swift assets/AppIcon-source.png assets/AppIcon.icns
+fi
+if [ -f "assets/AppIcon.icns" ]; then
+    cp "assets/AppIcon.icns" "$RESOURCES_DIR/AppIcon.icns"
+fi
+
 # Create Info.plist (single window, custom URL scheme, no document types to prevent multiple tabs/windows)
 cat <<EOF > "$CONTENTS_DIR/Info.plist"
 <?xml version="1.0" encoding="UTF-8"?>
@@ -34,6 +42,8 @@ cat <<EOF > "$CONTENTS_DIR/Info.plist"
     <string>$APP_NAME</string>
     <key>CFBundleIdentifier</key>
     <string>com.gitxx.macos</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundleName</key>
     <string>$APP_NAME</string>
     <key>CFBundlePackageType</key>
@@ -50,6 +60,10 @@ cat <<EOF > "$CONTENTS_DIR/Info.plist"
     <string>public.app-category.developer-tools</string>
     <key>NSHumanReadableCopyright</key>
     <string>Copyright © 2026 GitXX. All rights reserved.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>GitXX uses the microphone when you dictate a message to the AI assistant.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>GitXX turns your speech into text for the AI assistant.</string>
     <key>CFBundleURLTypes</key>
     <array>
         <dict>

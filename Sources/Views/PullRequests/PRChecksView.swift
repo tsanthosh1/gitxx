@@ -65,7 +65,7 @@ struct PRChecksView: View {
             Divider()
             listContent
         }
-        .background(Color(NSColor.controlBackgroundColor).opacity(0.4))
+        .themedSurface(state.accentTheme, .sidebar)
     }
 
     @ViewBuilder
@@ -152,7 +152,7 @@ struct PRChecksView: View {
     @ViewBuilder
     private var summaryHeader: some View {
         let checks = state.prChecks
-        let r = PRMergeReadiness.evaluate(pr: pr, checks: checks, timeline: state.prTimeline)
+        let r = PRMergeReadiness.evaluate(pr: pr, checks: checks, timeline: state.prTimeline, meta: state.prMeta)
         let failed = checks.filter(\.isFailure).count
         let pending = checks.filter(\.isPending).count
         let rerunnable = checks.contains { ($0.isFailure || $0.conclusion?.lowercased() == "cancelled") && $0.actionsRunId != nil }
@@ -199,6 +199,13 @@ struct PRChecksView: View {
                     PRActionLabel("Refresh", systemImage: "arrow.clockwise", isRunning: state.isLoadingPRChecks)
                 }
                 .buttonStyle(PRActionButtonStyle(.secondary, size: .compact))
+                Button {
+                    state.showActions(branch: pr.headBranch)
+                } label: {
+                    Label("Branch runs", systemImage: "play.circle")
+                }
+                .buttonStyle(PRActionButtonStyle(.subtle, size: .compact))
+                .help("All GitHub Actions runs for \(pr.headBranch)")
                 if rerunnable && pr.state.isActive {
                     Button {
                         Task { try? await state.rerunFailedChecks() }
@@ -403,13 +410,23 @@ private struct CheckDetailPane: View {
                 .disabled(state.isPRActionRunning("rerun-\(jobId)"))
                 .help("Re-run this job")
             }
+            if let runId = check.actionsRunId.flatMap(Int.init) {
+                Button {
+                    state.openActionsRun(runId: runId, jobId: check.actionsJobId.flatMap(Int.init))
+                } label: {
+                    Label("View in Actions", systemImage: "play.circle")
+                }
+                .buttonStyle(PRActionButtonStyle(.secondary, size: .compact))
+                .help("Open this workflow run in the Actions tab (all jobs, step logs, artifacts)")
+            }
             if let urlString = check.htmlUrl, let url = URL(string: urlString) {
                 Button {
                     NSWorkspace.shared.open(url)
                 } label: {
-                    Label("Open on GitHub", systemImage: "arrow.up.forward.square")
+                    Image(systemName: "arrow.up.forward.square")
                 }
                 .buttonStyle(PRActionButtonStyle(.secondary, size: .compact))
+                .help("Open on GitHub")
             }
         }
     }

@@ -1,5 +1,7 @@
+import SwiftUI
 import Foundation
 import AppKit
+import WebKit
 
 /// Developer hooks for exercising web-rendered views outside the app (e.g. in a headless browser).
 enum DevFixtures {
@@ -49,6 +51,20 @@ enum DevFixtures {
                     state.showRepoPicker = false
                     state.showBranchPicker = false
                 }
+            }
+        case let s where s.hasPrefix("picker-keys:"):
+            // `picker-keys:branch:3` opens a picker and presses ↓ that many times, as the keyboard would.
+            let parts = s.split(separator: ":")
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(2))
+                if parts[1] == "repo" { state.showRepoPicker = true } else { state.showBranchPicker = true }
+                try? await Task.sleep(for: .milliseconds(700))
+                let editor = NSApp.keyWindow?.firstResponder as? NSTextView
+                for _ in 0..<(parts.count > 2 ? Int(parts[2]) ?? 1 : 1) {
+                    editor?.doCommand(by: #selector(NSResponder.moveDown(_:)))
+                    try? await Task.sleep(for: .milliseconds(150))
+                }
+                print("PICKER_KEYS \(parts[1]) fieldEditor=\(editor != nil)")
             }
         case let s where s.hasPrefix("branch-switch:"):
             let names = s.dropFirst("branch-switch:".count).split(separator: ",").map(String.init)
@@ -157,6 +173,198 @@ enum DevFixtures {
         case "home-prs":
             state.homeTab = .pullRequests
             state.goHome()
+        case let s where s.hasPrefix("render-open-with:"):
+            // `render-open-with:<out.png>[:<changed file>]` draws the popover offscreen (popovers are separate windows).
+            let parts = s.split(separator: ":").map(String.init)
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(2))
+                if parts.count > 2 {
+                    state.activeTab = .changes
+                    state.selectedFile = state.files.first { $0.path == parts[2] }
+                }
+                let host = NSHostingView(rootView: OpenWithPopover(state: state, targets: state.openWithTargets)
+                    .background(Color(NSColor.windowBackgroundColor)).environment(\.colorScheme, .dark))
+                host.frame = NSRect(x: 0, y: 0, width: 350, height: 520)
+                let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false
+                window.appearance = NSAppearance(named: .darkAqua)
+                window.contentView = host
+                window.orderBack(nil)
+                try? await Task.sleep(for: .seconds(1.5))
+                host.frame.size = host.fittingSize
+                if let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
+                    host.cacheDisplay(in: host.bounds, to: rep)
+                    try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: parts[1]))
+                }
+                window.close()
+                print("RENDERED_OPEN_WITH targets=\(state.openWithTargets.map(\.kind.rawValue))")
+            }
+        case let s where s.hasPrefix("render-diff-review:"):
+            // `render-diff-review:<out.png>` draws the changed-files diff sheet for the first few changed files.
+            let out = String(s.dropFirst("render-diff-review:".count))
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(3))
+                let paths = Array(state.workingChanges.prefix(6).map(\.path))
+                let host = NSHostingView(rootView: ChangedFilesDiffSheet(state: state, title: "Local changes blocking this pull", paths: paths,
+                                                                          initial: paths.dropFirst().first ?? paths.first) { _ in }
+                    .frame(width: 1100, height: 680)
+                    .background(Color(NSColor.windowBackgroundColor)).environment(\.colorScheme, .dark))
+                host.frame = NSRect(x: 0, y: 0, width: 1100, height: 680)
+                let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false
+                window.appearance = NSAppearance(named: .darkAqua)
+                window.contentView = host
+                window.orderBack(nil)
+                try? await Task.sleep(for: .seconds(3))
+                if let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
+                    host.cacheDisplay(in: host.bounds, to: rep)
+                    try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: out))
+                }
+                window.close()
+                print("RENDERED_DIFF_REVIEW \(paths.count)")
+            }
+        case let s where s.hasPrefix("render-new-branch:"):
+            // `render-new-branch:<out.png>[:picker]` draws the Create branch sheet, optionally with the base list open.
+            let parts = s.split(separator: ":").map(String.init)
+            let out = parts[1]
+            let picker = parts.count > 2
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(3))
+                let host = NSHostingView(rootView: NewBranchSheet(state: state, request: NewBranchRequest(initialName: "feat/new branch ui"), showBasePicker: picker)
+                    .background(Color(NSColor.windowBackgroundColor)).environment(\.colorScheme, .dark))
+                host.frame = NSRect(origin: .zero, size: host.fittingSize)
+                let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false
+                window.appearance = NSAppearance(named: .darkAqua)
+                window.contentView = host
+                window.orderBack(nil)
+                try? await Task.sleep(for: .seconds(2))
+                if let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
+                    host.cacheDisplay(in: host.bounds, to: rep)
+                    try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: out))
+                }
+                window.close()
+                print("RENDERED_NEW_BRANCH")
+            }
+        case let s where s.hasPrefix("render-conflict:"):
+            // `render-conflict:<out.png>:<file>` draws the three-pane merge; `list` as the file draws the conflicts list.
+            let parts = s.split(separator: ":").map(String.init)
+            let out = parts[1], file = parts.count > 2 ? parts[2] : "list"
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(3))
+                guard let repo = state.currentRepo?.path else { return }
+                let sides = await ConflictMerge.sides(repo: repo)
+                let root: AnyView
+                if file == "list" {
+                    root = AnyView(ConflictsListSheet(state: state, request: ConflictResolverRequest(path: nil)))
+                } else {
+                    let view = ConflictResolverView(state: state, repo: repo, path: file, sides: sides) { _ in }
+                    root = AnyView(view.frame(width: 1280, height: 720))
+                }
+                let host = NSHostingView(rootView: root.background(Color(NSColor.windowBackgroundColor)).environment(\.colorScheme, .dark))
+                host.frame = NSRect(origin: .zero, size: host.fittingSize)
+                let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false
+                window.appearance = NSAppearance(named: .darkAqua)
+                window.contentView = host
+                window.orderBack(nil)
+                try? await Task.sleep(for: .seconds(2))
+                if let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
+                    host.cacheDisplay(in: host.bounds, to: rep)
+                    try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: out))
+                }
+                window.close()
+                print("RENDERED_CONFLICT")
+            }
+        case let s where s.hasPrefix("render-pull-failed:"):
+            // `render-pull-failed:<out.png>` draws the Pull failed dialog as it looks after returning from the diff review.
+            let out = String(s.dropFirst("render-pull-failed:".count))
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(3))
+                let files = Array(state.workingChanges.prefix(2).map(\.path)) + ["packages/payment-button/package.json"]
+                state.presentGitFailure(GitRetryableOperation(title: "Pull failed", verb: "pull") {},
+                                        error: NSError(domain: "git", code: 1, userInfo: [NSLocalizedDescriptionKey:
+                                            "error: Your local changes to the following files would be overwritten by merge:\n\t" + files.joined(separator: "\n\t") + "\nPlease commit your changes or stash them before you merge.\nAborting"]))
+                guard let error = state.operationError else { return }
+                state.operationError = nil
+                let host = NSHostingView(rootView: GitErrorSheet(state: state, error: error, startReviewed: true)
+                    .background(Color(NSColor.windowBackgroundColor)).environment(\.colorScheme, .dark))
+                host.frame = NSRect(origin: .zero, size: host.fittingSize)
+                let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false
+                window.appearance = NSAppearance(named: .darkAqua)
+                window.contentView = host
+                window.orderBack(nil)
+                try? await Task.sleep(for: .seconds(2))
+                if let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
+                    host.cacheDisplay(in: host.bounds, to: rep)
+                    try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: out))
+                }
+                window.close()
+                print("RENDERED_PULL_FAILED")
+            }
+        case let s where s.hasPrefix("render-dispatch:"):
+            // `render-dispatch:<out.png>[:<workflow name filter>]` draws the Run workflow sheet offscreen.
+            let parts = s.split(separator: ":").map(String.init)
+            state.activeTab = .actions
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(6))
+                let store = state.actions
+                let filter = parts.count > 2 ? parts[2].lowercased() : ""
+                guard let workflow = store.workflows.first(where: { $0.isActive && (filter.isEmpty || $0.name.lowercased().contains(filter)) }) else {
+                    print("RENDER_DISPATCH no workflow (\(store.workflows.count) loaded)")
+                    return
+                }
+                let host = NSHostingView(rootView: ActionsDispatchSheet(state: state, store: store, workflow: workflow)
+                    .background(Color(NSColor.windowBackgroundColor)).environment(\.colorScheme, .dark))
+                host.frame = NSRect(x: 0, y: 0, width: 560, height: 700)
+                let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false
+                window.appearance = NSAppearance(named: .darkAqua)
+                window.contentView = host
+                window.orderBack(nil)
+                try? await Task.sleep(for: .seconds(4))
+                host.frame.size = host.fittingSize
+                if let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
+                    host.cacheDisplay(in: host.bounds, to: rep)
+                    try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: parts[1]))
+                }
+                window.close()
+                print("RENDERED_DISPATCH \(workflow.name)")
+            }
+        case let s where s.hasPrefix("open-with"):
+            // `open-with` (repository) or `open-with:<path>` (selects that changed file first).
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(2))
+                if let path = s.split(separator: ":").dropFirst().first.map(String.init) {
+                    state.activeTab = .changes
+                    state.selectedFile = state.files.first { $0.path == path }
+                }
+                state.showOpenWith = true
+            }
+        case "home-chats":
+            state.homeTab = .conversations
+            state.goHome()
+        case "chat-seed":
+            // Saves two sample conversations (no model calls) and opens Home › AI conversations.
+            let chat = AIChatStore.shared
+            let context = AIPageContext.capture(from: state)
+            for (question, answer) in [
+                ("Why is CI failing on this PR?", "**Custom PR Lint** needs a real *Review URL*; `N/A` is rejected."),
+                ("Update the description based on the changes", "Updated the description of PR #1994."),
+            ] {
+                chat.newChat()
+                chat.items = [AIChatItem(kind: .user(question, context: context)),
+                              AIChatItem(kind: .tool(name: "get_pr_checks", summary: "checks of PR #1994", status: .done, output: "3 failing")),
+                              AIChatItem(kind: .assistant(answer))]
+                chat.saveThread()
+            }
+            chat.newChat()
+            state.homeTab = .conversations
+            state.goHome()
+        case let s where s.hasPrefix("chat-thread"):
+            // `chat-thread` opens the newest saved conversation in the assistant panel.
+            if let first = AIChatStore.shared.threads.first { AIChatStore.shared.openThread(first.id) }
         case "home-open-pr-back":
             state.homeTab = .pullRequests
             state.goHome()
@@ -224,6 +432,27 @@ enum DevFixtures {
                     }
                 }
             }
+        case let s where s.hasPrefix("pr-to-actions:"):
+            // Opens a PR's checks, then follows the first Actions check into the Actions tab.
+            if let number = Int(s.dropFirst("pr-to-actions:".count)) {
+                Task {
+                    await state.openPullRequest(number: number, tab: .checks)
+                    for _ in 0..<60 where !state.prChecks.contains(where: { $0.actionsRunId != nil }) { try? await Task.sleep(for: .milliseconds(200)) }
+                    guard let check = state.prChecks.first(where: { $0.actionsRunId != nil }),
+                          let runId = check.actionsRunId.flatMap(Int.init) else { print("PR_TO_ACTIONS none"); return }
+                    state.openActionsRun(runId: runId, jobId: check.actionsJobId.flatMap(Int.init))
+                    try? await Task.sleep(for: .seconds(4))
+                    print("PR_TO_ACTIONS run=\(runId) selected=\(String(describing: state.actions.selectedRunId)) job=\(String(describing: state.actions.selectedJobId)) prs=\(state.actions.selectedRun.map { state.actions.pullRequestNumbers(for: $0) } ?? [])")
+                }
+            }
+        case let s where s.hasPrefix("pr-merge:"):
+            if let number = Int(s.dropFirst("pr-merge:".count)) {
+                Task {
+                    await state.openPullRequest(number: number)
+                    try? await Task.sleep(for: .seconds(6))
+                    state.prScrollToMergeBoxRequested = true
+                }
+            }
         case let s where s.hasPrefix("prs-author-closed:"):
             state.activeTab = .pullRequests
             state.setPRFilter(.closed)
@@ -245,6 +474,92 @@ enum DevFixtures {
         case "stash":
             state.activeTab = .changes
             state.showStashDrawer = true
+        case "actions":
+            state.activeTab = .actions
+        case let s where s.hasPrefix("actions-workflow:"):
+            // `actions-workflow:<workflowId>` selects a workflow in the sidebar.
+            state.activeTab = .actions
+            if let id = Int(s.dropFirst("actions-workflow:".count)) {
+                Task {
+                    try? await Task.sleep(for: .seconds(3))
+                    state.actions.filter.workflowId = id
+                }
+            }
+        case "actions-branch":
+            state.showActions(branch: state.currentRepo?.currentBranch)
+        case let s where s.hasPrefix("actions-run"):
+            // `actions-run` (first failed run, else first), `actions-run:job` (also opens its failed job), `actions-run:<runId>`.
+            state.activeTab = .actions
+            let arg = s.split(separator: ":").dropFirst().first.map(String.init)
+            Task {
+                if let arg, let id = Int(arg) {
+                    state.openActionsRun(runId: id)
+                    return
+                }
+                for _ in 0..<60 where state.actions.runs.isEmpty { try? await Task.sleep(for: .milliseconds(200)) }
+                guard let run = state.actions.runs.first(where: { $0.actionsStatus == .failure }) ?? state.actions.runs.first else { return }
+                state.actions.selectRun(run)
+                if arg != "job" {
+                    for _ in 0..<60 where state.actions.jobs.isEmpty { try? await Task.sleep(for: .milliseconds(200)) }
+                    state.actions.selectJob(nil)
+                }
+                print("ACTIONS_RUN \(run.id) \(run.workflowName) #\(run.runNumber) jobs=\(state.actions.jobs.count)")
+            }
+        case let s where s.hasPrefix("pr-js:"):
+            // `pr-js:<number>|<javascript>` opens the PR conversation and runs the script in its page once loaded.
+            let rest = s.dropFirst("pr-js:".count)
+            let parts = rest.split(separator: "|", maxSplits: 1).map(String.init)
+            if let number = parts.first.flatMap({ Int($0) }) {
+                Task {
+                    await state.openPullRequest(number: number)
+                    try? await Task.sleep(for: .seconds(7))
+                    guard parts.count > 1 else { return }
+                    @MainActor func find(_ view: NSView) -> WKWebView? {
+                        if let web = view as? WKWebView { return web }
+                        for sub in view.subviews { if let hit = find(sub) { return hit } }
+                        return nil
+                    }
+                    let web = NSApp.windows.lazy.compactMap { $0.contentView.flatMap(find) }.first
+                    web?.evaluateJavaScript(parts[1]) { _, error in if let error { print("PR_JS error \(error)") } }
+                }
+            }
+        case let s where s.hasPrefix("changes-select:"):
+            // `changes-select:<index>` selects the Nth changed file (the list should scroll to it).
+            state.activeTab = .changes
+            let index = Int(s.dropFirst("changes-select:".count)) ?? 0
+            Task {
+                for _ in 0..<50 where state.workingChanges.isEmpty { try? await Task.sleep(for: .milliseconds(200)) }
+                try? await Task.sleep(for: .seconds(1))
+                let changes = state.workingChanges
+                if !changes.isEmpty { state.selectFile(changes[min(index, changes.count - 1)].primary) }
+            }
+        case "settings-appearance":
+            state.showSettings = true
+        case let s where s.hasPrefix("settings:"):
+            state.initialPreferencesCategory = String(s.dropFirst("settings:".count))
+            state.showSettings = true
+        case "history-longest":
+            state.activeTab = .history
+            Task {
+                for _ in 0..<50 where state.commits.isEmpty { try? await Task.sleep(for: .milliseconds(200)) }
+                if let commit = state.commits.prefix(400).max(by: { $0.body.count < $1.body.count }) {
+                    state.selectCommit(commit)
+                    print("HISTORY_LONGEST \(commit.shortSha) body=\(commit.body.count)")
+                }
+            }
+        case let s where s.hasPrefix("actions-fullscreen:"):
+            state.activeTab = .actions
+            if let runId = Int(s.dropFirst("actions-fullscreen:".count)) {
+                Task {
+                    state.openActionsRun(runId: runId)
+                    for _ in 0..<60 where state.actions.jobs.isEmpty { try? await Task.sleep(for: .milliseconds(250)) }
+                    guard let job = state.actions.jobs.first(where: { $0.actionsStatus == .failure }) ?? state.actions.jobs.first else { return }
+                    state.actions.selectJob(job.id)
+                    try? await Task.sleep(for: .seconds(3))
+                    state.actions.fullScreenLog = ActionsFullScreenLog(jobId: job.id,
+                        expanded: Set(job.steps.filter { $0.actionsStatus == .failure }.map(\.number)), query: "")
+                }
+            }
         case "history":
             state.activeTab = .history
         case "history-branch":
@@ -299,6 +614,21 @@ enum DevFixtures {
                 } catch {
                     print("DEV_REBASE failed: \(error.localizedDescription)")
                 }
+                semaphore.signal()
+            }
+            semaphore.wait()
+            exit(0)
+        }
+        if let idx = args.firstIndex(of: "--dev-ai-tool"), idx + 4 < args.count {
+            // --dev-ai-tool <repo> <owner/name> <tool> <json-args>; token from GITXX_DEV_TOKEN.
+            let context = AIToolContext(repoPath: args[idx + 1], repoSlug: args[idx + 2],
+                                        githubToken: ProcessInfo.processInfo.environment["GITXX_DEV_TOKEN"])
+            let name = args[idx + 3], toolArgs = AIChatTools.parse(args[idx + 4])
+            let semaphore = DispatchSemaphore(value: 0)
+            Task.detached {
+                print(AIChatTools.summary(name: name, args: toolArgs))
+                let result = await AIChatTools.execute(name: name, args: toolArgs, context: context)
+                print("ok=\(result.ok) chars=\(result.output.count)\n\(result.output)")
                 semaphore.signal()
             }
             semaphore.wait()

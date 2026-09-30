@@ -14,7 +14,8 @@ public enum ConversationHTMLBuilder {
         timeline: [PRTimelineItem],
         checks: [PRCheckRun] = [],
         filter: PRConversationView.ResolvedFilter = .all,
-        meta: PRDetailMeta? = nil
+        meta: PRDetailMeta? = nil,
+        headCheckedOut: Bool = false
     ) -> String {
         let bag = MarkdownBag()
         let displayedItems: [PRTimelineItem]
@@ -40,7 +41,7 @@ public enum ConversationHTMLBuilder {
         }
 
         let prDescriptionHTML = renderPRDescription(pr: pr, bag: bag)
-        let mergeBoxHTML = renderMergeBox(pr: pr, checks: checks, timeline: timeline, meta: meta)
+        let mergeBoxHTML = renderMergeBox(pr: pr, checks: checks, timeline: timeline, meta: meta, headCheckedOut: headCheckedOut)
         let composerHTML = renderCommentComposer(pr: pr)
 
         return """
@@ -82,6 +83,7 @@ public enum ConversationHTMLBuilder {
         let avatarUrl = escapeAttr(pr.authorAvatarUrl ?? "https://github.com/\(pr.authorName).png?size=76")
         let rawBody = pr.body.isEmpty ? "_No description provided._" : pr.body
         bag.add("body-desc", rawBody)
+        bag.add("raw-desc", pr.body)
 
         return """
 <div class="timeline-item" id="pr-description-card" data-nav="desc" data-nav-label="Description by \(escapeAttr(pr.authorName))">
@@ -95,11 +97,41 @@ public enum ConversationHTMLBuilder {
         <span class="author-name">\(escapeHTML(pr.authorName))</span>
         <span class="header-text">opened this pull request \(formatDate(pr.createdAt))</span>
       </div>
-      <div class="card-header-right">
+      <div class="card-header-right desc-header-right">
+        <div class="desc-actions" role="group">
+          <button type="button" class="desc-btn" onclick="openDescEditor()" title="Edit the description (Markdown)">\(HTMLIcon.pencil)<span>Edit</span></button>
+          <span class="desc-actions-sep"></span>
+          <button type="button" class="desc-btn desc-btn-ai" onclick="toggleDescAI()" title="Describe a change and let AI rewrite the description">\(HTMLIcon.sparkle)<span>Edit with AI</span></button>
+        </div>
         <span class="badge badge-author">Author</span>
+        <div class="desc-ai-pop" id="descAIPop" data-visibility style="display:none">
+          <div class="desc-ai-title">\(HTMLIcon.sparkle) Edit description with AI</div>
+          <textarea id="descAIInput" data-persist class="input-textarea desc-ai-input" rows="3" placeholder="What should change? e.g. “Summarize the testing done and tick the checklist”" onkeydown="descAIKey(event)"></textarea>
+          <div class="desc-ai-actions">
+            <button type="button" class="btn btn-secondary btn-sm" onclick="descAIOpenChat()" title="Continue in the AI chat window, which can read the PR template, lint workflows and merged PRs">\(HTMLIcon.comment) Open in chat</button>
+            <span class="composer-hint">⌘↵ to submit</span>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="toggleDescAI(false)">Cancel</button>
+            <button type="button" class="btn btn-primary btn-sm" id="descAISubmit" data-busy="Rewriting…" onclick="descAISubmit()">Submit</button>
+          </div>
+        </div>
       </div>
     </div>
-    <div class="card-body markdown-body" id="body-desc"></div>
+    <div class="card-body markdown-body" id="body-desc" data-visibility></div>
+    <div class="desc-editor" id="descEditor" data-visibility style="display:none">
+      <div class="composer-tabs">
+        <button type="button" class="composer-tab active" id="descTabWrite" onclick="setDescMode('write')">Write</button>
+        <button type="button" class="composer-tab" id="descTabPreview" onclick="setDescMode('preview')">Preview</button>
+      </div>
+      <div class="composer">
+        <textarea class="input-textarea composer-input desc-edit-input" id="descEditInput" data-persist rows="14" placeholder="Describe this pull request… (Markdown supported)" onkeydown="descEditKey(event)"></textarea>
+        <div class="markdown-body composer-preview" id="descEditPreview" style="display:none"></div>
+        <div class="composer-actions">
+          <span class="composer-hint">⌘↵ to save · Esc to cancel</span>
+          <button type="button" class="btn btn-secondary" onclick="closeDescEditor()">Cancel</button>
+          <button type="button" class="btn btn-primary" onclick="saveDescEditor()">Save description</button>
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 """
@@ -118,9 +150,9 @@ public enum ConversationHTMLBuilder {
         case .commitPushed(let commits):
             return renderCommitPushed(commits)
         case .merged(let author, let date, let sha):
-            return renderStatusEvent(icon: "⑂", color: "#a371f7", text: "<strong>\(escapeHTML(author))</strong> merged commit <code>\(escapeHTML(String(sha.prefix(7))))</code> into <code>\(escapeHTML(pr.baseBranch))</code>", date: date)
+            return renderStatusEvent(icon: HTMLIcon.merge, color: "#a371f7", text: "<strong>\(escapeHTML(author))</strong> merged commit <code>\(escapeHTML(String(sha.prefix(7))))</code> into <code>\(escapeHTML(pr.baseBranch))</code>", date: date)
         case .closed(let author, let date):
-            return renderStatusEvent(icon: "✕", color: "#f85149", text: "<strong>\(escapeHTML(author))</strong> closed this pull request", date: date)
+            return renderStatusEvent(icon: HTMLIcon.x, color: "#f85149", text: "<strong>\(escapeHTML(author))</strong> closed this pull request", date: date)
         case .reopened(let author, let date):
             return renderStatusEvent(icon: "↺", color: "#3fb950", text: "<strong>\(escapeHTML(author))</strong> reopened this pull request", date: date)
         case .labeled(let name, let color, let date, let actor):
@@ -178,13 +210,13 @@ public enum ConversationHTMLBuilder {
         let cardClass: String
         switch state {
         case "APPROVED":
-            badgeIcon = "✓"; badgeColor = "#238636"; actionText = "approved these changes"; cardClass = "review-approved"
+            badgeIcon = HTMLIcon.check; badgeColor = "#238636"; actionText = "approved these changes"; cardClass = "review-approved"
         case "CHANGES_REQUESTED":
             badgeIcon = "!"; badgeColor = "#da3633"; actionText = "requested changes"; cardClass = "review-changes"
         case "DISMISSED":
             badgeIcon = "—"; badgeColor = "#6e7681"; actionText = "had their review dismissed"; cardClass = ""
         default:
-            badgeIcon = "💬"; badgeColor = "#1f6feb"; actionText = review.body.isEmpty ? "reviewed" : "reviewed and commented"; cardClass = ""
+            badgeIcon = HTMLIcon.comment; badgeColor = "#1f6feb"; actionText = review.body.isEmpty ? "reviewed" : "reviewed and commented"; cardClass = ""
         }
 
         let navKind = state == "APPROVED" ? "approved" : (state == "CHANGES_REQUESTED" ? "changes" : "comment")
@@ -228,7 +260,7 @@ public enum ConversationHTMLBuilder {
             pills += ""
         } else if isResolved {
             let by = thread.resolvedByName.map { " by \(escapeHTML($0))" } ?? ""
-            pills += "<span class=\"resolved-pill\">✓ Resolved\(by)</span>"
+            pills += "<span class=\"resolved-pill\">\(HTMLIcon.check) Resolved\(by)</span>"
         } else {
             pills += "<span class=\"unresolved-pill\">Unresolved</span>"
         }
@@ -301,7 +333,7 @@ public enum ConversationHTMLBuilder {
         return """
 <div class="timeline-item" id="\(threadDomId)" data-thread data-nav="\(isResolved ? "resolved" : "open")" data-nav-label="\(isResolved ? "Resolved" : "Open") thread · \(escapeAttr(thread.fileDisplayName))\(thread.line.map { ":\($0)" } ?? "")">
   <div class="avatar-col">
-    <div class="thread-icon" style="color: \(isResolved ? "#3fb950" : "#d29922");">\(isResolved ? "✓" : "💬")</div>
+    <div class="thread-icon" style="color: \(isResolved ? "#3fb950" : "#d29922");">\(isResolved ? HTMLIcon.check : HTMLIcon.comment)</div>
     <div class="timeline-line"></div>
   </div>
   <div class="card thread-card \(isResolved ? "thread-resolved" : "")">
@@ -371,8 +403,8 @@ public enum ConversationHTMLBuilder {
 
     // MARK: - Checks & Merge Box
 
-    private static func renderMergeBox(pr: PullRequest, checks: [PRCheckRun], timeline: [PRTimelineItem], meta: PRDetailMeta?) -> String {
-        let readiness = PRMergeReadiness.evaluate(pr: pr, checks: checks, timeline: timeline)
+    private static func renderMergeBox(pr: PullRequest, checks: [PRCheckRun], timeline: [PRTimelineItem], meta: PRDetailMeta?, headCheckedOut: Bool) -> String {
+        let readiness = PRMergeReadiness.evaluate(pr: pr, checks: checks, timeline: timeline, meta: meta)
         let sortedChecks = PRCheckRun.sortedByBlockerPriority(checks)
         let hasChecks = !checks.isEmpty
         let isActive = pr.state.isActive
@@ -391,11 +423,11 @@ public enum ConversationHTMLBuilder {
             checkHeaderTitle = "No checks have run yet"
             checkHeaderSubtext = "No continuous integration status checks reported."
         } else if readiness.failedRequired > 0 {
-            checkHeaderIcon = "✕"; checkHeaderClass = "check-failure"
+            checkHeaderIcon = HTMLIcon.x; checkHeaderClass = "check-failure"
             checkHeaderTitle = readiness.failedRequired == 1 ? "1 required check failed" : "\(readiness.failedRequired) required checks failed"
             checkHeaderSubtext = "\(failingTotal) failing, \(pendingTotal) in progress, \(readiness.passed) successful"
         } else if readiness.pendingRequired > 0 {
-            checkHeaderIcon = "⏱"; checkHeaderClass = "check-pending"
+            checkHeaderIcon = HTMLIcon.clock; checkHeaderClass = "check-pending"
             checkHeaderTitle = "Waiting for \(readiness.pendingRequired) required check\(readiness.pendingRequired == 1 ? "" : "s")"
             checkHeaderSubtext = "\(pendingTotal) in progress, \(readiness.passed) successful" + (readiness.failedOptional > 0 ? ", \(readiness.failedOptional) optional failing" : "")
         } else if readiness.failedOptional > 0 {
@@ -403,23 +435,52 @@ public enum ConversationHTMLBuilder {
             checkHeaderTitle = readiness.failedOptional == 1 ? "1 optional check failed" : "\(readiness.failedOptional) optional checks failed"
             checkHeaderSubtext = "\(readiness.passed) successful · optional failures do not block merging"
         } else if pendingTotal > 0 {
-            checkHeaderIcon = "⏱"; checkHeaderClass = "check-pending"
+            checkHeaderIcon = HTMLIcon.clock; checkHeaderClass = "check-pending"
             checkHeaderTitle = "Some checks are in progress"
             checkHeaderSubtext = "\(pendingTotal) in progress, \(readiness.passed) successful"
         } else {
-            checkHeaderIcon = "✓"; checkHeaderClass = "check-success"
+            checkHeaderIcon = HTMLIcon.check; checkHeaderClass = "check-success"
             checkHeaderTitle = "All checks have passed"
             checkHeaderSubtext = "\(readiness.passed) successful \(readiness.passed == 1 ? "check" : "checks")"
         }
 
         let rerunnableFailed = checks.contains { ($0.isFailure || $0.conclusion?.lowercased() == "cancelled") && $0.actionsRunId != nil }
+        let hasActionsChecks = checks.contains { $0.actionsRunId != nil }
         var checksHeaderActions = ""
         if isActive && rerunnableFailed {
-            checksHeaderActions += "<button type=\"button\" class=\"btn btn-secondary btn-sm\" data-busy=\"Re-running…\" onclick=\"sendAction({action:'rerunFailed'}, 'rerunFailed', this)\">↻ Re-run failed</button>"
+            checksHeaderActions += "<button type=\"button\" class=\"btn btn-secondary btn-sm\" data-busy=\"Re-running…\" onclick=\"sendAction({action:'rerunFailed'}, 'rerunFailed', this)\">\(HTMLIcon.sync) Re-run failed</button>"
+        }
+        if hasActionsChecks {
+            checksHeaderActions += "<button type=\"button\" class=\"btn btn-secondary btn-sm\" title=\"Runs for this branch in the Actions tab\" onclick=\"sendAction({action:'showPRActions'})\">\(HTMLIcon.play) Actions</button>"
         }
         if hasChecks {
             let collapseByDefault = failingTotal == 0 && pendingTotal == 0
             checksHeaderActions += "<button type=\"button\" class=\"btn-link\" id=\"checksToggleBtn\" onclick=\"toggleChecksList()\">\(collapseByDefault ? "Show all checks" : "Hide all checks")</button>"
+        }
+
+        // Proportion bar and per-state filter chips.
+        var checksSummaryHTML = ""
+        if hasChecks {
+            let counts = PRCheckRun.Group.allCases.map { g in (g, checks.filter { $0.group == g }.count) }.filter { $0.1 > 0 }
+            let bar = counts.map { g, n in
+                "<span class=\"ck-bar-seg ck-bar-\(g)\" style=\"flex:\(n)\"></span>"
+            }.joined()
+            let chips = counts.map { g, n -> String in
+                let icon: String
+                switch g {
+                case .failing: icon = HTMLIcon.x
+                case .running: icon = HTMLIcon.dot
+                case .passing: icon = HTMLIcon.check
+                case .skipped: icon = HTMLIcon.skip
+                }
+                return "<button type=\"button\" class=\"ck-chip ck-chip-\(g)\" data-group=\"\(g)\" onclick=\"filterChecks('\(g)', this)\">\(icon)<b>\(n)</b> \(g.title.lowercased())</button>"
+            }.joined()
+            checksSummaryHTML = """
+            <div class="ck-summary">
+              <div class="ck-bar">\(bar)</div>
+              <div class="ck-chips">\(chips)</div>
+            </div>
+            """
         }
 
         var checksRowsHTML = ""
@@ -427,38 +488,79 @@ public enum ConversationHTMLBuilder {
             let items = sortedChecks.filter { $0.group == group }
             guard !items.isEmpty else { continue }
             let requiredCount = items.filter(\.isRequired).count
-            checksRowsHTML += "<div class=\"check-group-header check-group-\(group)\">\(group.title) <span class=\"check-group-count\">\(items.count)</span>\(requiredCount > 0 ? " <span class=\"check-group-req\">· \(requiredCount) required</span>" : "")</div>"
+            checksRowsHTML += "<div class=\"check-group-header check-group-\(group)\" data-group=\"\(group)\">\(group.title) <span class=\"check-group-count\">\(items.count)</span>\(requiredCount > 0 ? " <span class=\"check-group-req\">· \(requiredCount) required</span>" : "")</div>"
             for c in items {
                 let icon: String
                 let cssClass: String
                 switch c.group {
-                case .running: icon = "●"; cssClass = "check-pending"
-                case .passing: icon = "✓"; cssClass = "check-success"
-                case .skipped: icon = "–"; cssClass = "check-neutral"
-                case .failing: icon = "✕"; cssClass = "check-failure"
+                case .running: icon = HTMLIcon.dot; cssClass = "check-pending"
+                case .passing: icon = HTMLIcon.check; cssClass = "check-success"
+                case .skipped: icon = HTMLIcon.skip; cssClass = "check-neutral"
+                case .failing: icon = HTMLIcon.x; cssClass = "check-failure"
                 }
                 let reqBadge = c.isRequired
                     ? "<span class=\"check-req-badge check-req-mandatory\">Required</span>"
                     : "<span class=\"check-req-badge check-req-optional\">Optional</span>"
-                var rerun = ""
-                if isActive, c.isRerunnable, let jobId = c.actionsJobId {
-                    rerun = "<button type=\"button\" class=\"btn btn-secondary btn-xs\" data-busy=\"…\" onclick=\"sendAction({action:'rerunCheck', jobId:'\(escapeJS(jobId))'}, 'rerun-\(escapeJS(jobId))', this)\">Re-run</button>"
+
+                let duration = c.durationText.flatMap { $0 == "0s" ? nil : $0 } ?? ""
+                let outcome: String
+                switch c.group {
+                case .failing:
+                    let word = c.conclusion?.lowercased() == "cancelled" ? "Cancelled" : (c.conclusion?.lowercased() == "timed_out" ? "Timed out" : "Failed")
+                    outcome = duration.isEmpty ? word : "\(word) after \(duration)"
+                case .running: outcome = c.status.lowercased() == "queued" ? "Queued" : "In progress"
+                case .passing: outcome = duration.isEmpty ? "Succeeded" : "Succeeded in \(duration)"
+                case .skipped: outcome = c.displayConclusion
                 }
-                var details = ""
+                let source = c.appName ?? (c.actionsRunId != nil ? "GitHub Actions" : nil)
+                var sub = [outcome]
+                if let source, !source.isEmpty { sub.append(escapeHTML(source)) }
+                if let title = c.outputTitle?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty, title != c.name {
+                    sub.append(escapeHTML(String(title.prefix(140))))
+                }
+
+                let runId = c.actionsRunId.flatMap(Int.init)
+                let jobId = c.actionsJobId.flatMap(Int.init)
+                let summary = c.outputSummary?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let rowId = "ck-" + String(c.id.unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }.map(Character.init))
+
+                var buttons = ""
+                if c.group == .failing {
+                    buttons += "<button type=\"button\" class=\"ck-btn ck-btn-ai\" title=\"Ask the AI assistant why it failed\" onclick=\"event.stopPropagation(); sendAction({action:'explainCheck', name:'\(escapeJS(c.name))'})\">\(HTMLIcon.sparkle)<span>Explain</span></button>"
+                }
+                if isActive, c.isRerunnable, let job = c.actionsJobId {
+                    buttons += "<button type=\"button\" class=\"ck-btn\" title=\"Re-run this job\" data-busy=\"…\" onclick=\"event.stopPropagation(); sendAction({action:'rerunCheck', jobId:'\(escapeJS(job))'}, 'rerun-\(escapeJS(job))', this)\">\(HTMLIcon.sync)<span>Re-run</span></button>"
+                }
+                if let runId {
+                    buttons += "<button type=\"button\" class=\"ck-btn ck-btn-primary\" title=\"Steps and logs in the Actions tab\" onclick=\"event.stopPropagation(); sendAction({action:'openCheckRun', runId:\(runId), jobId:\(jobId.map(String.init) ?? "null")})\">\(HTMLIcon.play)<span>Logs</span></button>"
+                } else if !summary.isEmpty {
+                    buttons += "<button type=\"button\" class=\"ck-btn\" title=\"Show the check's report\" onclick=\"event.stopPropagation(); toggleCheckSummary('\(rowId)')\">\(HTMLIcon.chevronDown)<span>Report</span></button>"
+                }
                 if let link = c.htmlUrl, !link.isEmpty {
-                    details = "<a href=\"\(escapeAttr(link))\" class=\"check-details-link\">Details</a>"
+                    buttons += "<a class=\"ck-btn ck-btn-icon\" href=\"\(escapeAttr(link))\" title=\"Open on GitHub\" onclick=\"event.stopPropagation()\">\(HTMLIcon.linkExternal)</a>"
+                }
+
+                let rowClick: String
+                if let runId {
+                    rowClick = "sendAction({action:'openCheckRun', runId:\(runId), jobId:\(jobId.map(String.init) ?? "null")})"
+                } else if !summary.isEmpty {
+                    rowClick = "toggleCheckSummary('\(rowId)')"
+                } else if c.htmlUrl?.isEmpty == false {
+                    rowClick = "var a=this.querySelector('a.ck-btn-icon'); if(a) a.click()"
+                } else {
+                    rowClick = ""
                 }
 
                 checksRowsHTML += """
-                <div class="check-grid-row \(c.isFailure && c.isRequired ? "check-row-blocking" : "")">
-                  <span class="check-row-icon \(cssClass)">\(icon)</span>
-                  <span class="check-col-status \(cssClass)">\(escapeHTML(c.displayConclusion))</span>
-                  <span class="check-col-req">\(reqBadge)</span>
-                  <span class="check-col-name" title="\(escapeAttr(c.name))">\(escapeHTML(c.name))</span>
-                  <span class="check-col-duration">\(escapeHTML(c.durationText ?? ""))</span>
-                  <span class="check-col-rerun">\(rerun)</span>
-                  <span class="check-col-details">\(details)</span>
+                <div class="ck-row \(c.isFailure && c.isRequired ? "check-row-blocking" : "") \(rowClick.isEmpty ? "" : "ck-clickable")" data-group="\(c.group)" \(rowClick.isEmpty ? "" : "onclick=\"\(escapeAttr(rowClick))\"")>
+                  <span class="ck-icon \(cssClass)">\(icon)</span>
+                  <div class="ck-main">
+                    <div class="ck-name-line"><span class="ck-name" title="\(escapeAttr(c.name))">\(escapeHTML(c.name))</span>\(reqBadge)</div>
+                    <div class="ck-sub">\(sub.joined(separator: " · "))</div>
+                  </div>
+                  <div class="ck-actions">\(buttons)</div>
                 </div>
+                \(summary.isEmpty || runId != nil ? "" : "<div class=\"ck-report\" id=\"\(rowId)\" style=\"display:none\">\(escapeHTML(String(summary.prefix(4000))))</div>")
                 """
             }
         }
@@ -485,17 +587,17 @@ public enum ConversationHTMLBuilder {
             let requesters = reviewers.filter { $0.state == "CHANGES_REQUESTED" }.map(\.login)
             let awaiting = reviewers.filter { $0.state == "REQUESTED" }.map(\.login)
             let reviewAction = "<button type=\"button\" class=\"btn btn-secondary btn-sm\" onclick=\"sendAction({action:'openReview'}, 'openReview')\">Review</button>"
-            switch pr.reviewVerdict {
+            switch readiness.reviewVerdict {
             case .changesRequested:
                 let who = requesters.isEmpty ? "A reviewer" : requesters.map(escapeHTML).joined(separator: ", ")
-                rulesHTML += rule("✕", "rule-failure", "Changes requested", "\(who) requested changes.", action: reviewAction)
+                rulesHTML += rule(HTMLIcon.x, "rule-failure", "Changes requested", "\(who) requested changes.", action: reviewAction)
             case .approved:
-                let who = approvers.isEmpty ? "" : "Approved by \(approvers.map(escapeHTML).joined(separator: ", "))."
-                rulesHTML += rule("✓", "rule-success", "Changes approved", who.isEmpty ? "Required approvals have been granted." : who)
+                let who = approvers.isEmpty ? "" : "\(approvers.count) approving review\(approvers.count == 1 ? "" : "s") by \(approvers.map(escapeHTML).joined(separator: ", "))."
+                rulesHTML += rule(HTMLIcon.check, "rule-success", "Changes approved", who.isEmpty ? "Required approvals have been granted." : who)
             case .pending, .commented:
                 let awaitingText = awaiting.isEmpty ? "" : " Awaiting \(awaiting.map(escapeHTML).joined(separator: ", "))."
                 if readiness.isReviewBlocked {
-                    rulesHTML += rule("✕", "rule-failure", "Review required", "At least one approving review is required.\(awaitingText)", action: reviewAction)
+                    rulesHTML += rule(HTMLIcon.x, "rule-failure", "Review required", "At least one approving review is required.\(awaitingText)", action: reviewAction)
                 } else {
                     rulesHTML += rule("●", "rule-neutral", "Review pending", "Reviews are pending or optional.\(awaitingText)", action: reviewAction)
                 }
@@ -504,14 +606,14 @@ public enum ConversationHTMLBuilder {
             // Checks
             if hasChecks {
                 if readiness.failedRequired > 0 {
-                    let action = rerunnableFailed ? "<button type=\"button\" class=\"btn btn-secondary btn-sm\" data-busy=\"Re-running…\" onclick=\"sendAction({action:'rerunFailed'}, 'rerunFailed', this)\">↻ Re-run failed</button>" : ""
-                    rulesHTML += rule("✕", "rule-failure", "Required status checks failed", "\(readiness.failedRequired) of \(readiness.requiredTotal) required checks must pass before merging.", action: action)
+                    let action = rerunnableFailed ? "<button type=\"button\" class=\"btn btn-secondary btn-sm\" data-busy=\"Re-running…\" onclick=\"sendAction({action:'rerunFailed'}, 'rerunFailed', this)\">\(HTMLIcon.sync) Re-run failed</button>" : ""
+                    rulesHTML += rule(HTMLIcon.x, "rule-failure", "Required status checks failed", "\(readiness.failedRequired) of \(readiness.requiredTotal) required checks must pass before merging.", action: action)
                 } else if readiness.pendingRequired > 0 {
-                    rulesHTML += rule("⏱", "rule-pending", "Required status checks in progress", "Waiting for \(readiness.pendingRequired) required check\(readiness.pendingRequired == 1 ? "" : "s"). This page refreshes automatically.")
+                    rulesHTML += rule(HTMLIcon.clock, "rule-pending", "Required status checks in progress", "Waiting for \(readiness.pendingRequired) required check\(readiness.pendingRequired == 1 ? "" : "s"). This page refreshes automatically.")
                 } else if readiness.requiredTotal > 0 {
-                    rulesHTML += rule("✓", "rule-success", "Required status checks passed", "All \(readiness.requiredTotal) required checks have passed" + (readiness.failedOptional > 0 ? " (\(readiness.failedOptional) optional failing, non-blocking)." : "."))
+                    rulesHTML += rule(HTMLIcon.check, "rule-success", "Required status checks passed", "All \(readiness.requiredTotal) required checks have passed" + (readiness.failedOptional > 0 ? " (\(readiness.failedOptional) optional failing, non-blocking)." : "."))
                 } else {
-                    rulesHTML += rule("✓", "rule-success", "No required status checks", readiness.failedOptional > 0 ? "\(readiness.failedOptional) optional checks failed (non-blocking)." : "\(readiness.passed) checks succeeded.")
+                    rulesHTML += rule(HTMLIcon.check, "rule-success", "No required status checks", readiness.failedOptional > 0 ? "\(readiness.failedOptional) optional checks failed (non-blocking)." : "\(readiness.passed) checks succeeded.")
                 }
             }
 
@@ -520,22 +622,26 @@ public enum ConversationHTMLBuilder {
                 if !readiness.resolutionKnown {
                     rulesHTML += rule("●", "rule-neutral", "Conversations", "Loading resolution status for \(readiness.totalThreads) review thread\(readiness.totalThreads == 1 ? "" : "s")…")
                 } else if readiness.unresolvedThreads > 0 {
-                    rulesHTML += rule("✕", "rule-failure", "Unresolved conversations", "\(readiness.unresolvedThreads) of \(readiness.totalThreads) conversation\(readiness.totalThreads == 1 ? "" : "s") must be resolved before merging.", action: "<button type=\"button\" class=\"btn btn-secondary btn-sm\" onclick=\"jumpToUnresolved()\">Show next</button>")
+                    rulesHTML += rule(HTMLIcon.x, "rule-failure", "Unresolved conversations", "\(readiness.unresolvedThreads) of \(readiness.totalThreads) conversation\(readiness.totalThreads == 1 ? "" : "s") must be resolved before merging.", action: "<button type=\"button\" class=\"btn btn-secondary btn-sm\" onclick=\"jumpToUnresolved()\">Show next</button>")
                 } else {
-                    rulesHTML += rule("✓", "rule-success", "All conversations resolved", "\(readiness.totalThreads) review thread\(readiness.totalThreads == 1 ? "" : "s") resolved.")
+                    rulesHTML += rule(HTMLIcon.check, "rule-success", "All conversations resolved", "\(readiness.totalThreads) review thread\(readiness.totalThreads == 1 ? "" : "s") resolved.")
                 }
             }
 
             // Branch state
-            let updateBtn = "<button type=\"button\" class=\"btn btn-secondary btn-sm\" data-busy=\"Updating…\" onclick=\"sendAction({action:'updateBranch'}, 'updateBranch', this)\">⑂ Update branch</button>"
+            let updateBtn = "<button type=\"button\" class=\"btn btn-secondary btn-sm\" data-busy=\"Updating…\" onclick=\"sendAction({action:'updateBranch'}, 'updateBranch', this)\">\(HTMLIcon.merge) Update branch</button>"
             if pr.hasConflicts {
-                rulesHTML += rule("✕", "rule-failure", "This branch has conflicts that must be resolved", "Conflicting changes with <code>\(escapeHTML(pr.baseBranch))</code>.", action: updateBtn)
+                rulesHTML += rule(HTMLIcon.x, "rule-failure", "This branch has conflicts that must be resolved", "Conflicting changes with <code>\(escapeHTML(pr.baseBranch))</code>.", action: updateBtn)
             } else if pr.isBehind {
                 rulesHTML += rule("!", "rule-pending", "This branch is out-of-date with the base branch", "Merge the latest changes from <code>\(escapeHTML(pr.baseBranch))</code> into this branch.", action: updateBtn)
             } else if pr.mergeable == nil {
                 rulesHTML += rule("●", "rule-neutral", "Checking for merge conflicts…", "GitHub is computing mergeability.")
             } else {
-                rulesHTML += rule("✓", "rule-success", "No conflicts with the base branch", "Changes can be cleanly merged.")
+                rulesHTML += rule(HTMLIcon.check, "rule-success", "No conflicts with the base branch", "Changes can be cleanly merged.")
+            }
+
+            if readiness.isPushRestricted {
+                rulesHTML += rule(HTMLIcon.x, "rule-failure", "You're not authorized to push to this branch", "Branch protection on <code>\(escapeHTML(pr.baseBranch))</code> restricts who can merge. <a href=\"https://docs.github.com/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches\">About protected branches</a>")
             }
 
             if pr.isDraft {
@@ -549,23 +655,23 @@ public enum ConversationHTMLBuilder {
         let statusBoxTitle: String
         let statusBoxSubtext: String
         if isMerged {
-            statusBoxIcon = "⑂"; statusBoxClass = "check-merged"
+            statusBoxIcon = HTMLIcon.merge; statusBoxClass = "check-merged"
             statusBoxTitle = "Pull request successfully merged and closed"
             statusBoxSubtext = "Commits have been merged into <code>\(escapeHTML(pr.baseBranch))</code>."
         } else if isClosed {
-            statusBoxIcon = "✕"; statusBoxClass = "check-closed"
+            statusBoxIcon = HTMLIcon.x; statusBoxClass = "check-closed"
             statusBoxTitle = "This pull request is closed"
             statusBoxSubtext = "Reopen this pull request to propose changes again."
         } else if readiness.status == .blocked {
-            statusBoxIcon = "✕"; statusBoxClass = "check-failure"
+            statusBoxIcon = HTMLIcon.x; statusBoxClass = "check-failure"
             statusBoxTitle = "Merging is blocked"
             statusBoxSubtext = readiness.blockers.map(escapeHTML).joined(separator: " · ")
         } else if readiness.status == .pending {
-            statusBoxIcon = "⏱"; statusBoxClass = "check-pending"
+            statusBoxIcon = HTMLIcon.clock; statusBoxClass = "check-pending"
             statusBoxTitle = "Waiting on required checks"
             statusBoxSubtext = "Merging will be available once required checks pass."
         } else {
-            statusBoxIcon = "✓"; statusBoxClass = "check-success"
+            statusBoxIcon = HTMLIcon.check; statusBoxClass = "check-success"
             statusBoxTitle = "Ready to merge"
             statusBoxSubtext = "All requirements are satisfied. Merging can be performed automatically."
         }
@@ -618,10 +724,10 @@ public enum ConversationHTMLBuilder {
 
         let badgeIcon: String
         let badgeClass: String
-        if isMerged { badgeIcon = "⑂"; badgeClass = "badge-merged" }
-        else if isClosed || readiness.status == .blocked { badgeIcon = "✕"; badgeClass = "badge-closed" }
-        else if readiness.status == .pending { badgeIcon = "⏱"; badgeClass = "badge-pending" }
-        else { badgeIcon = "✓"; badgeClass = "badge-open" }
+        if isMerged { badgeIcon = HTMLIcon.merge; badgeClass = "badge-merged" }
+        else if isClosed || readiness.status == .blocked { badgeIcon = HTMLIcon.x; badgeClass = "badge-closed" }
+        else if readiness.status == .pending { badgeIcon = HTMLIcon.clock; badgeClass = "badge-pending" }
+        else { badgeIcon = HTMLIcon.check; badgeClass = "badge-open" }
 
         let checksCollapsed = failingTotal == 0 && pendingTotal == 0
 
@@ -641,6 +747,7 @@ public enum ConversationHTMLBuilder {
               </div>
               <div class="checks-header-actions">\(checksHeaderActions)</div>
             </div>
+            \(checksSummaryHTML)
             \(hasChecks ? "<div class=\"checks-list-container\" id=\"checksListContainer\" data-visibility style=\"\(checksCollapsed ? "display:none" : "")\">\(checksRowsHTML)</div>" : "")
             \(rulesHTML.isEmpty ? "" : """
             <div class="merge-divider"></div>
@@ -657,17 +764,36 @@ public enum ConversationHTMLBuilder {
                 <div class="branch-subtext">\(statusBoxSubtext)</div>
               </div>
             </div>
-            \(pr.hasConflicts && isActive ? conflictHelpHTML(pr) : "")
+            \(pr.hasConflicts && isActive ? conflictHelpHTML(pr, headCheckedOut: headCheckedOut) : "")
             \(actionSectionHTML)
           </div>
         </div>
         """
     }
 
-    private static func conflictHelpHTML(_ pr: PullRequest) -> String {
-        """
+    private static func conflictHelpHTML(_ pr: PullRequest, headCheckedOut: Bool) -> String {
+        let head = escapeHTML(pr.headBranch)
+        let base = escapeHTML(pr.baseBranch)
+        let desc = headCheckedOut
+            ? "<code>\(head)</code> is checked out here: merge <code>\(base)</code> into it, resolve the conflicts in the merge tool, and GitXX pushes the result."
+            : "Resolve them in GitHub's web editor, or check out <code>\(head)</code> to merge <code>\(base)</code> and resolve locally."
+        let local = headCheckedOut
+            ? "<button type=\"button\" class=\"btn btn-primary btn-sm\" data-busy=\"Merging \(base)…\" onclick=\"sendAction({action:'resolveConflictsLocally'}, 'resolveConflictsLocally', this)\">\(HTMLIcon.merge) Update &amp; resolve locally</button>"
+            : ""
+        return """
         <div class="conflict-callout-box">
-          <button type="button" class="btn-link" onclick="toggleConflictInstructions()">View command line instructions for resolving conflicts</button>
+          <div class="conflict-callout-header">
+            <span class="conflict-icon">\(HTMLIcon.x)</span>
+            <div>
+              <div class="conflict-title">Resolve conflicts to merge</div>
+              <div class="conflict-desc">\(desc)</div>
+            </div>
+          </div>
+          <div class="conflict-actions">
+            \(local)
+            <a class="btn btn-secondary btn-sm" href="\(escapeAttr(pr.url))/conflicts">Resolve on GitHub \(HTMLIcon.linkExternal)</a>
+          </div>
+          <button type="button" class="btn-link conflict-cli-toggle" onclick="toggleConflictInstructions()">View command line instructions for resolving conflicts</button>
           <div class="conflict-cli-box" id="conflictCliInstructions" data-visibility style="display: none;">
             <div class="cli-step-title">Step 1: Check out the pull request branch and merge the base branch</div>
             <pre class="cli-pre"><code>git checkout \(escapeHTML(pr.headBranch))&#10;git pull origin \(escapeHTML(pr.baseBranch))</code></pre>
@@ -686,7 +812,7 @@ public enum ConversationHTMLBuilder {
             : (pr.state == .closed ? "<button type=\"button\" class=\"btn btn-secondary\" data-busy=\"Reopening…\" onclick=\"sendAction({action:'reopenPR'}, 'reopenPR', this)\">Reopen pull request</button>" : "")
         return """
         <div class="timeline-item composer-item" id="new-comment-composer" data-nav="composer" data-nav-label="Write a comment">
-          <div class="avatar-col"><div class="event-icon-circle composer-icon">✎</div></div>
+          <div class="avatar-col"><div class="event-icon-circle composer-icon">\(HTMLIcon.pencil)</div></div>
           <div class="card composer-card">
             <div class="composer-tabs">
               <button type="button" class="composer-tab active" id="tabWrite" onclick="setComposerMode('write')">Write</button>
@@ -882,6 +1008,17 @@ public enum ConversationHTMLBuilder {
   };
 
   window.gitxxActionDone = function (key, ok) {
+    if (key === "desc-edit" && !ok && pendingText[key] !== undefined) {
+      var body = document.getElementById("body-desc");
+      if (body) renderInto(body, (window.__MD || {})["body-desc"] || "");
+      openDescEditor(pendingText[key]);
+    }
+    if (key === "desc-ai" && ok) {
+      var ai = document.getElementById("descAIInput");
+      if (ai) ai.value = "";
+      var pop = document.getElementById("descAIPop");
+      if (pop) pop.style.display = "none";
+    }
     var btn = pendingButtons[key];
     delete pendingButtons[key];
     if (btn && btn.dataset.label !== undefined) {
@@ -1012,6 +1149,21 @@ public enum ConversationHTMLBuilder {
     var btn = document.getElementById("checksToggleBtn");
     if (el && btn) btn.textContent = el.style.display === "none" ? "Show all checks" : "Hide all checks";
   }
+  window.filterChecks = function (group, chip) {
+    var box = document.getElementById("checksListContainer");
+    if (!box) return;
+    var active = chip && !chip.classList.contains("active") ? group : null;
+    document.querySelectorAll(".ck-chip").forEach(function (c) { c.classList.toggle("active", c === chip && !!active); });
+    box.querySelectorAll("[data-group]").forEach(function (el) {
+      el.style.display = !active || el.getAttribute("data-group") === active ? "" : "none";
+    });
+    box.querySelectorAll(".ck-report").forEach(function (el) { el.style.display = "none"; });
+    if (box.style.display === "none") { box.style.display = ""; syncChecksToggle(); }
+  };
+  window.toggleCheckSummary = function (id) {
+    var el = document.getElementById(id);
+    if (el) el.style.display = el.style.display === "none" ? "" : "none";
+  };
   window.toggleChecksList = function () {
     var el = document.getElementById("checksListContainer");
     if (!el) return;
@@ -1091,6 +1243,83 @@ public enum ConversationHTMLBuilder {
     ta.value = (ta.value ? ta.value + "\n\n" : "") + "@" + author + " wrote:\n" + quoted + "\n\n";
     focusComposer();
   };
+
+  // ---- Description editing (manual + AI) ----
+  function byId(id) { return document.getElementById(id); }
+  window.setDescMode = function (mode) {
+    var ta = byId("descEditInput"), pv = byId("descEditPreview");
+    if (!ta || !pv) return;
+    if (mode === "preview") {
+      renderInto(pv, ta.value.trim() ? ta.value : "_Nothing to preview_");
+      pv.style.display = ""; ta.style.display = "none";
+    } else {
+      pv.style.display = "none"; ta.style.display = "";
+    }
+    var tw = byId("descTabWrite"), tp = byId("descTabPreview");
+    if (tw) tw.classList.toggle("active", mode !== "preview");
+    if (tp) tp.classList.toggle("active", mode === "preview");
+  };
+  window.openDescEditor = function (text) {
+    var ed = byId("descEditor"), body = byId("body-desc"), ta = byId("descEditInput");
+    if (!ed || !body || !ta) return;
+    toggleDescAI(false);
+    ta.value = typeof text === "string" ? text : ((window.__MD || {})["raw-desc"] || "");
+    body.style.display = "none";
+    ed.style.display = "";
+    setDescMode("write");
+    ta.focus();
+    ta.setSelectionRange(0, 0);
+    ta.scrollTop = 0;
+  };
+  window.closeDescEditor = function () {
+    var ed = byId("descEditor"), body = byId("body-desc");
+    if (ed) ed.style.display = "none";
+    if (body) body.style.display = "";
+  };
+  window.saveDescEditor = function () {
+    var ta = byId("descEditInput"), body = byId("body-desc");
+    if (!ta) return;
+    var text = ta.value;
+    if (body) renderInto(body, text.trim() ? text : "_No description provided._");
+    closeDescEditor();
+    pendingText["desc-edit"] = text;
+    sendAction({ action: "updateDescription", body: text }, "desc-edit");
+  };
+  window.descEditKey = function (e) {
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); saveDescEditor(); }
+    else if (e.key === "Escape") { e.preventDefault(); closeDescEditor(); }
+  };
+  window.toggleDescAI = function (show) {
+    var pop = byId("descAIPop");
+    if (!pop) return;
+    var visible = typeof show === "boolean" ? show : pop.style.display === "none";
+    pop.style.display = visible ? "" : "none";
+    if (visible) { var i = byId("descAIInput"); if (i) i.focus(); }
+  };
+  window.descAISubmit = function () {
+    var i = byId("descAIInput");
+    if (!i) return;
+    var text = i.value.trim();
+    if (!text) { i.focus(); return; }
+    sendAction({ action: "aiEditDescription", instruction: text }, "desc-ai", byId("descAISubmit"));
+  };
+  window.descAIOpenChat = function () {
+    var i = byId("descAIInput");
+    post({ action: "openDescriptionInChat", instruction: i ? i.value.trim() : "" });
+    if (i) i.value = "";
+    toggleDescAI(false);
+  };
+  window.descAIKey = function (e) {
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); descAISubmit(); }
+    else if (e.key === "Escape") { e.preventDefault(); toggleDescAI(false); }
+  };
+  document.addEventListener("mousedown", function (e) {
+    var pop = byId("descAIPop");
+    if (!pop || pop.style.display === "none") return;
+    if (pop.contains(e.target) || (e.target.closest && e.target.closest(".desc-btn-ai"))) return;
+    if (byId("descAISubmit") && byId("descAISubmit").disabled) return;
+    toggleDescAI(false);
+  });
 
   // ---- Checklist toggles in the PR description ----
   document.addEventListener("change", function (e) {
@@ -1369,12 +1598,15 @@ public enum ConversationHTMLBuilder {
   }
   window.gitxxInsetChanged = function () { setChromeHidden(chromeHidden, false); };
   window.gitxxSyncChrome = function () { lastY = window.scrollY; syncChrome(true); };
+
+  // The native "Show toolbar" button calls this while the bars are hidden.
+  window.gitxxShowChrome = function () { travel = 0; setChromeHidden(false, true); };
   (function () {
     var b = document.createElement("button");
     b.type = "button";
     b.id = "backToTop";
     b.title = "Back to top";
-    b.innerHTML = '<span class="btt-arrow">↑</span><span>Top</span>';
+    b.innerHTML = '<span class="btt-arrow">\#(HTMLIcon.arrowUp)</span><span>Top</span>';
     b.onclick = function () { window.scrollTo({ top: 0, behavior: "smooth" }); };
     document.body.appendChild(b);
   })();
@@ -1394,7 +1626,8 @@ public enum ConversationHTMLBuilder {
     // MARK: - Larger Controls & New Components CSS
 
     private static let extraCSS = #"""
-body { padding-right: 44px; }
+body { padding-right: 44px; background: transparent !important; }
+html { background: transparent; }
 html::-webkit-scrollbar, body::-webkit-scrollbar { display: none; width: 0; height: 0; }
 html { padding-top: var(--gitxx-top-inset, 0px); scroll-padding-top: calc(var(--gitxx-chrome-visible, 0px) + 16px); }
 .check-group-header {
@@ -1421,6 +1654,54 @@ html { padding-top: var(--gitxx-top-inset, 0px); scroll-padding-top: calc(var(--
 .check-col-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #e6edf3; }
 .check-col-duration { text-align: right; color: #8b949e; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; }
 .check-col-rerun, .check-col-details { text-align: right; }
+.ck-summary { padding: 0 16px 12px; display: flex; flex-direction: column; gap: 8px; }
+.ck-bar { display: flex; height: 6px; border-radius: 3px; overflow: hidden; gap: 2px; background: rgba(110,118,129,0.12); }
+.ck-bar-seg { min-width: 4px; }
+.ck-bar-failing { background: #f85149; } .ck-bar-running { background: #d29922; }
+.ck-bar-passing { background: #3fb950; } .ck-bar-skipped { background: #6e7681; }
+.ck-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.ck-chip {
+  display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 10px; border-radius: 12px;
+  font-size: 11.5px; color: #c9d1d9; background: rgba(110,118,129,0.12); border: 1px solid transparent; cursor: pointer;
+}
+.ck-chip b { font-weight: 700; }
+.ck-chip:hover { background: rgba(110,118,129,0.22); }
+.ck-chip.active { border-color: currentColor; }
+.ck-chip-failing { color: #ff7b72; } .ck-chip-running { color: #e3b341; } .ck-chip-passing { color: #56d364; } .ck-chip-skipped { color: #8b949e; }
+.ck-row {
+  display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: center; column-gap: 10px;
+  padding: 8px 12px 8px 16px; border-top: 1px solid #21262d; transition: background 0.1s;
+}
+.ck-row.ck-clickable { cursor: pointer; }
+.ck-row.ck-clickable:hover { background: rgba(110,118,129,0.10); }
+.ck-icon {
+  width: 20px; height: 20px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 12px;
+}
+.ck-icon.check-pending .octicon { animation: ck-pulse 1.4s ease-in-out infinite; }
+@keyframes ck-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+.ck-main { min-width: 0; }
+.ck-name-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ck-name { font-size: 13px; font-weight: 600; color: #e6edf3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ck-name-line .check-req-badge { flex-shrink: 0; margin: 0; }
+.ck-sub { font-size: 11.5px; color: #8b949e; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ck-row[data-group="failing"] .ck-sub { color: #ff9b94; }
+.ck-actions { display: flex; align-items: center; gap: 4px; }
+.ck-btn {
+  display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 9px; border-radius: 6px;
+  font-size: 12px; font-weight: 500; color: #c9d1d9; background: transparent; border: 1px solid rgba(240,246,252,0.10);
+  cursor: pointer; text-decoration: none; white-space: nowrap;
+}
+.ck-btn:hover { background: rgba(110,118,129,0.18); text-decoration: none; color: #e6edf3; }
+.ck-btn-primary { border-color: rgba(88,166,255,0.35); color: #79c0ff; }
+.ck-btn-primary:hover { background: rgba(56,139,253,0.15); color: #a5d6ff; }
+.ck-btn-ai { color: #d2a8ff; border-color: rgba(210,168,255,0.3); }
+.ck-btn-ai:hover { background: rgba(163,113,247,0.15); color: #e2c5ff; }
+.ck-btn-icon { width: 26px; padding: 0; justify-content: center; border-color: transparent; color: #8b949e; }
+.ck-btn[disabled] { opacity: 0.6; cursor: default; }
+.ck-report {
+  margin: 0 16px 10px 48px; padding: 10px 12px; font-size: 12px; line-height: 1.5; color: #c9d1d9; white-space: pre-wrap;
+  background: rgba(110,118,129,0.08); border: 1px solid #21262d; border-radius: 6px; max-height: 240px; overflow: auto;
+}
 
 #navRail {
   position: fixed; top: calc(var(--gitxx-chrome-visible, var(--gitxx-top-inset, 0px)) + 10px); bottom: 10px; right: 8px; width: 18px; z-index: 50;
@@ -1539,6 +1820,42 @@ html { padding-top: var(--gitxx-top-inset, 0px); scroll-padding-top: calc(var(--
 }
 .icon-btn:hover { background: rgba(110, 118, 129, 0.2); color: var(--color-fg-default); }
 .card-header-right { display: flex; align-items: center; gap: 6px; }
+.desc-header-right { position: relative; }
+\#(HTMLIcon.css)
+.desc-actions {
+  display: inline-flex; align-items: stretch; height: 26px; border-radius: 7px; overflow: hidden;
+  border: 1px solid var(--color-border-default); background: rgba(110, 118, 129, 0.08);
+}
+.desc-actions-sep { width: 1px; background: var(--color-border-default); }
+.desc-btn {
+  display: inline-flex; align-items: center; gap: 6px; background: transparent; border: 0; color: var(--color-fg-default);
+  font-size: 12px; font-weight: 600; font-family: inherit; padding: 0 10px; cursor: pointer;
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+.desc-btn .octicon { font-size: 13px; color: var(--color-fg-muted); transition: color 0.12s ease; }
+.desc-btn:hover { background: rgba(110, 118, 129, 0.2); }
+.desc-btn:hover .octicon { color: var(--color-fg-default); }
+.desc-btn:active { background: rgba(110, 118, 129, 0.3); }
+.desc-btn-ai .octicon { color: #bc8cff; }
+.desc-btn-ai:hover { background: rgba(163, 113, 247, 0.16); color: #e2c5ff; }
+.desc-btn-ai:hover .octicon { color: #d2a8ff; }
+.desc-ai-title { display: flex; align-items: center; gap: 6px; }
+.desc-ai-title .octicon { color: #bc8cff; }
+.desc-ai-pop {
+  position: absolute; top: calc(100% + 8px); right: 0; z-index: 60; width: min(460px, 80vw);
+  padding: 12px; display: flex; flex-direction: column; gap: 10px;
+  background: rgba(22, 27, 34, 0.96); border: 1px solid rgba(163, 113, 247, 0.45); border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(1, 4, 9, 0.6);
+  -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+}
+.desc-ai-title { font-size: 12.5px; font-weight: 600; color: var(--color-fg-default); }
+.desc-ai-input { min-height: 76px; background: var(--color-canvas-default); }
+.desc-ai-actions { display: flex; align-items: center; gap: 8px; }
+.desc-ai-actions .composer-hint { margin-left: auto; margin-right: 4px; }
+.desc-editor { background: var(--color-canvas-subtle); }
+.desc-editor .composer { padding: 12px 14px; }
+.desc-edit-input { min-height: 260px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+.desc-editor .composer-preview { min-height: 260px; }
 
 .input-text, .input-textarea { font-size: 13px; padding: 8px 12px; line-height: 1.5; }
 .input-text { min-height: 34px; }
@@ -2456,6 +2773,13 @@ body {
   font-size: 11.5px;
   color: var(--color-fg-muted);
 }
+.rule-desc a {
+  color: #4493f8;
+  text-decoration: none;
+}
+.rule-desc a:hover {
+  text-decoration: underline;
+}
 
 .conflict-callout-box {
   border: 1px solid rgba(248, 81, 73, 0.35);
@@ -2492,6 +2816,29 @@ body {
   display: flex;
   gap: 8px;
   margin-top: 10px;
+  margin-left: 26px;
+  flex-wrap: wrap;
+}
+
+.conflict-actions .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  text-decoration: none;
+}
+
+.conflict-actions .btn svg,
+.conflict-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.conflict-icon {
+  color: #f85149;
+}
+
+.conflict-cli-toggle {
+  margin: 10px 0 0 26px;
 }
 
 .conflict-cli-box {

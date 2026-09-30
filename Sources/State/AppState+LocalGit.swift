@@ -61,6 +61,55 @@ extension AppState {
         }
     }
 
+    // MARK: - Concluding a merge / rebase / cherry-pick / revert
+
+    /// Runs `git <verb> --continue` once nothing is unmerged. A failure (e.g. a hook rejecting the merge commit)
+    /// opens the failure dialog with fixes instead of a passing toast. Returns whether it succeeded.
+    @discardableResult
+    public func continueOperationInProgress() async -> Bool {
+        guard let repo = currentRepo else { return false }
+        let path = repo.path
+        guard let op = await ConflictMerge.inProgress(repo: path), op.verb != nil else { return false }
+        let name = op.title.lowercased()
+        let success = pendingPRMergePush.map { op == .merge ? "Merge committed. Pushing to update \($0)…" : nil } ?? nil
+        let operation = GitRetryableOperation(
+            title: "Couldn't finish the \(name)", verb: "commit the \(name)", success: success ?? "\(op.title) complete",
+            runSkippingHooks: { [weak self] in
+                try await ConflictMerge.continueOperation(repo: path, operation: op, skipHooks: true)
+                await self?.pushPendingPRMergeIfConcluded()
+            }
+        ) { [weak self] in
+            try await ConflictMerge.continueOperation(repo: path, operation: op)
+            await self?.pushPendingPRMergeIfConcluded()
+        }
+        do {
+            try await operation.run()
+            showToast(operation.success, type: .success)
+            await refreshRepoAsync(silent: false)
+            return true
+        } catch {
+            await refreshRepoAsync(silent: false)
+            if conflictResolverRequest != nil {
+                conflictResolverRequest = nil
+                try? await Task.sleep(for: .milliseconds(350))
+            }
+            presentGitFailure(operation, error: error)
+            return false
+        }
+    }
+
+    public func abortOperationInProgress() async {
+        guard let repo = currentRepo, let op = await ConflictMerge.inProgress(repo: repo.path) else { return }
+        do {
+            try await ConflictMerge.abort(repo: repo.path, operation: op)
+            pendingPRMergePush = nil
+            showToast("\(op.title) aborted", type: .info)
+        } catch {
+            showToast("Couldn't abort: \(error.localizedDescription)", type: .error)
+        }
+        await refreshRepoAsync(silent: false)
+    }
+
     // MARK: - History
 
     /// Shows another branch's log in History (`nil` = HEAD), so its commits can be cherry-picked.
@@ -197,6 +246,59 @@ extension AppState {
                 guard self.currentRepo?.path == repoPath, self.pendingStagingOps == 0 else { continue }
                 self.workingDiffCache[self.diffCacheKey(change.path)] = entry
             }
+        }
+    }
+}
+
+extension AppState {
+    /// Reverts every changed file (staged and unstaged) and deletes the untracked ones in the list.
+    public func discardAllChanges() {
+        guard let repo = currentRepo else { return }
+        let paths = Array(Set(files.map(\.path)))
+        guard !paths.isEmpty else { return }
+        Task {
+            do {
+                try await gitService.discardChanges(at: repo.path, files: paths)
+                showToast("Discarded changes in \(paths.count) file\(paths.count == 1 ? "" : "s")", type: .info)
+            } catch {
+                showToast("Discard failed: \(error.localizedDescription)", type: .error)
+            }
+            await refreshRepoAsync()
+        }
+    }
+}
+
+extension AppState {
+    /// Stashes just these files (tracked and untracked) under a descriptive message. Returns `true` on success.
+    @discardableResult
+    public func stashFiles(_ paths: [String]) async -> Bool {
+        guard let repo = currentRepo, !paths.isEmpty else { return false }
+        let label = paths.count == 1 ? (paths[0] as NSString).lastPathComponent : "\(paths.count) files"
+        do {
+            try await gitService.stashPush(at: repo.path, message: "GitXX: \(label)", includeUntracked: true, keepIndex: false, paths: paths)
+            showToast("Stashed \(label)", type: .info)
+            await loadStashes()
+            await refreshRepoAsync()
+            return true
+        } catch {
+            showToast("Stash failed: \(error.localizedDescription)", type: .error)
+            return false
+        }
+    }
+
+    /// Reverts just these files (and deletes them if untracked). Returns `true` on success.
+    @discardableResult
+    public func revertFiles(_ paths: [String]) async -> Bool {
+        guard let repo = currentRepo, !paths.isEmpty else { return false }
+        let label = paths.count == 1 ? (paths[0] as NSString).lastPathComponent : "\(paths.count) files"
+        do {
+            try await gitService.discardChanges(at: repo.path, files: paths)
+            showToast("Reverted \(label)", type: .info)
+            await refreshRepoAsync()
+            return true
+        } catch {
+            showToast("Revert failed: \(error.localizedDescription)", type: .error)
+            return false
         }
     }
 }

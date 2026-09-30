@@ -96,7 +96,7 @@ struct PRCommitsView: View {
                 .scrollContentBackground(.hidden)
             }
         }
-        .background(Color(NSColor.controlBackgroundColor).opacity(0.4))
+        .themedSurface(state.accentTheme, .sidebar)
     }
 
     @ViewBuilder

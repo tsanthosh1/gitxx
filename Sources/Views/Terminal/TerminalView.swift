@@ -150,7 +150,7 @@ public struct TerminalView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
-        .background(.ultraThinMaterial)
+        .themedSurface(state.accentTheme, .header)
     }
 
     private func quickChip(_ label: String, cmd: String) -> some View {
@@ -165,7 +165,7 @@ public struct TerminalView: View {
                 .foregroundStyle(.secondary)
                 .clipShape(RoundedRectangle(cornerRadius: 4))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.hoverPlain)
     }
 
 

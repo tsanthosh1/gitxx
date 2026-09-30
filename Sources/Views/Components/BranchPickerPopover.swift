@@ -3,11 +3,7 @@ import SwiftUI
 public struct BranchPickerPopover: View {
     @ObservedObject var state: AppState
     @State private var searchText: String = ""
-    @State private var newBranchName: String = ""
-    @State private var isCreatingBranch: Bool = false
-    @FocusState private var focusedField: Field?
-
-    private enum Field { case search, newBranch }
+    @State private var highlighted = 0
 
     var filteredBranches: [GitBranch] {
         if searchText.isEmpty {
@@ -24,15 +20,22 @@ public struct BranchPickerPopover: View {
                     .foregroundStyle(.secondary)
                     .font(.system(size: 13))
 
-                TextField("Filter branches...", text: $searchText)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 13))
-                    .focused($focusedField, equals: .search)
-                    .onSubmit {
-                        if let first = filteredBranches.first(where: { !$0.isCurrent }) ?? filteredBranches.first {
-                            checkout(first)
-                        }
-                    }
+                PaletteSearchField(
+                    text: $searchText,
+                    placeholder: "Filter branches...",
+                    onSubmit: {
+                        let list = filteredBranches
+                        if list.indices.contains(highlighted) { checkout(list[highlighted]) }
+                    },
+                    onDownArrow: { move(1) },
+                    onUpArrow: { move(-1) },
+                    onEscape: {
+                        if searchText.isEmpty { state.showBranchPicker = false } else { searchText = "" }
+                    },
+                    fontSize: 13,
+                    keepsFocus: false
+                )
+                .frame(height: 20)
 
                 if !searchText.isEmpty {
                     Button {
@@ -43,7 +46,7 @@ public struct BranchPickerPopover: View {
                             .font(.system(size: 13))
                             .frame(width: 22, height: 22)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.hoverPlain)
                 }
             }
             .padding(.horizontal, 12)
@@ -53,44 +56,10 @@ public struct BranchPickerPopover: View {
             Divider()
 
             // Branch List
+            ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 3) {
-                    if isCreatingBranch {
-                        VStack(alignment: .leading, spacing: 7) {
-                            Text("New Branch Name")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-
-                            HStack(spacing: 8) {
-                                TextField("e.g. feat/login-screen", text: $newBranchName)
-                                    .textFieldStyle(.roundedBorder)
-                                    .focused($focusedField, equals: .newBranch)
-                                    .onSubmit {
-                                        createAndCheckout()
-                                    }
-
-                                Button("Create") {
-                                    createAndCheckout()
-                                }
-                                .keyboardShortcut(.defaultAction)
-                                .buttonStyle(.borderedProminent)
-                                .disabled(newBranchName.trimmingCharacters(in: .whitespaces).isEmpty)
-
-                                Button("Cancel") {
-                                    isCreatingBranch = false
-                                    newBranchName = ""
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                        .padding(12)
-                        .background(Color.white.opacity(0.10))
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                        .padding(.horizontal, 6)
-                        .padding(.top, 6)
-                    }
-
-                    ForEach(filteredBranches) { branch in
+                    ForEach(Array(filteredBranches.enumerated()), id: \.element.id) { index, branch in
                         Button {
                             checkout(branch)
                         } label: {
@@ -129,34 +98,51 @@ public struct BranchPickerPopover: View {
                             .padding(.vertical, 8)
                             .contentShape(Rectangle())
                         }
-                        .buttonStyle(.plain)
-                        .background(branch.isCurrent ? Color.white.opacity(0.10) : Color.clear)
+                        .buttonStyle(.hoverPlain)
+                        .background(index == highlighted ? Color.primary.opacity(0.18) : (branch.isCurrent ? Color.white.opacity(0.10) : Color.clear))
                         .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .onHover { if $0 { highlighted = index } }
+                        .id(branch.id)
                     }
                 }
                 .padding(6)
             }
             .frame(maxHeight: 300)
+            .onChange(of: highlighted) { _, index in
+                let list = filteredBranches
+                guard list.indices.contains(index) else { return }
+                proxy.scrollTo(list[index].id, anchor: nil)
+            }
+            }
+            .onChange(of: searchText) { _, _ in resetHighlight() }
+            .onAppear { resetHighlight() }
 
             Divider()
 
             // Footer - Create Branch action
             HStack {
                 Button {
-                    isCreatingBranch.toggle()
-                    if isCreatingBranch {
-                        newBranchName = searchText
-                        DispatchQueue.main.async { focusedField = .newBranch }
-                    } else {
-                        focusedField = .search
-                    }
+                    state.beginNewBranch(name: searchText.trimmingCharacters(in: .whitespaces))
                 } label: {
-                    Label("New Branch...", systemImage: "plus.circle.fill")
-                        .font(.system(size: 12, weight: .medium))
-                        .frame(height: 28)
-                        .padding(.horizontal, 4)
+                    HStack(spacing: 6) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 11, weight: .bold))
+                        Text(searchText.trimmingCharacters(in: .whitespaces).isEmpty || filteredBranches.contains(where: { $0.displayName == searchText })
+                             ? "New Branch…" : "Create “\(searchText.trimmingCharacters(in: .whitespaces))”…")
+                            .font(.system(size: 12, weight: .semibold))
+                            .lineLimit(1)
+                        Text("⇧⌘N")
+                            .font(.system(size: 10.5, weight: .medium))
+                            .foregroundStyle(.secondary)
+                    }
+                    .foregroundStyle(state.accentTheme.primaryColor)
+                    .padding(.horizontal, 10)
+                    .frame(height: 28)
+                    .background(state.accentTheme.primaryColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 7))
+                    .contentShape(Rectangle())
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.hoverPlain)
+                .help("Create a branch, choosing its base (⇧⌘N)")
 
                 Spacer()
 
@@ -166,10 +152,10 @@ public struct BranchPickerPopover: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
-            .background(.thinMaterial.opacity(0.4))
+            .background(Color.primary.opacity(0.04))
         }
         .frame(width: 440)
-        .background(.ultraThinMaterial)
+        .themedSurface(state.accentTheme, .elevated)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -183,7 +169,17 @@ public struct BranchPickerPopover: View {
                 )
         )
         .shadow(color: .black.opacity(0.45), radius: 24, x: 0, y: 12)
-        .onAppear { DispatchQueue.main.async { focusedField = .search } }
+    }
+
+    private func move(_ delta: Int) {
+        let count = filteredBranches.count
+        guard count > 0 else { return }
+        highlighted = min(max(highlighted + delta, 0), count - 1)
+    }
+
+    /// Starts on the first branch you could switch to, so Return checks it out.
+    private func resetHighlight() {
+        highlighted = filteredBranches.firstIndex(where: { !$0.isCurrent }) ?? 0
     }
 
     private func checkout(_ branch: GitBranch) {
@@ -192,17 +188,6 @@ public struct BranchPickerPopover: View {
         }
         if !branch.isCurrent {
             state.checkoutBranch(branch.name)
-        }
-    }
-
-    private func createAndCheckout() {
-        let name = newBranchName.trimmingCharacters(in: .whitespaces)
-        guard !name.isEmpty else { return }
-        state.createBranch(name: name)
-        isCreatingBranch = false
-        newBranchName = ""
-        withAnimation(.easeInOut(duration: 0.12)) {
-            state.showBranchPicker = false
         }
     }
 }

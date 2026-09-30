@@ -6,6 +6,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSWindow.allowsAutomaticWindowTabbing = false
         KeyboardLayoutAdapter.shared.install()
+        MenuBarController.shared.start()
+        KeyboardNavigation.installCommandReturn()
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
 
@@ -426,7 +428,12 @@ struct GitXXApp: App {
                 }
                 .keyboardShortcut("o", modifiers: .command)
 
-                Button("New Branch...") {
+                Button("Open With…") {
+                    NotificationCenter.default.post(name: NSNotification.Name("ShowOpenWith"), object: nil)
+                }
+                .keyboardShortcut("o", modifiers: [.command, .option])
+
+                Button("Switch Branch…") {
                     NotificationCenter.default.post(name: NSNotification.Name("OpenBranchModal"), object: nil)
                 }
                 .keyboardShortcut("b", modifiers: .command)
@@ -470,10 +477,15 @@ struct GitXXApp: App {
                 }
                 .keyboardShortcut("3", modifiers: .command)
 
+                Button("Actions") {
+                    NotificationCenter.default.post(name: NSNotification.Name("SwitchTabActions"), object: nil)
+                }
+                .keyboardShortcut("4", modifiers: .command)
+
                 Button("Terminal") {
                     NotificationCenter.default.post(name: NSNotification.Name("SwitchTabTerminal"), object: nil)
                 }
-                .keyboardShortcut("4", modifiers: .command)
+                .keyboardShortcut("5", modifiers: .command)
 
                 Divider()
 
@@ -486,9 +498,21 @@ struct GitXXApp: App {
                     NotificationCenter.default.post(name: NSNotification.Name("ToggleAIChat"), object: nil)
                 }
                 .keyboardShortcut("i", modifiers: .command)
+
+                Button("Talk to AI Assistant") {
+                    NotificationCenter.default.post(name: NSNotification.Name("ToggleAIVoice"), object: nil)
+                }
+                .keyboardShortcut("i", modifiers: [.command, .option])
             }
 
             CommandMenu("Repository") {
+                Button("New Branch…") {
+                    NotificationCenter.default.post(name: NSNotification.Name("NewBranchAction"), object: nil)
+                }
+                .keyboardShortcut("n", modifiers: [.command, .shift])
+
+                Divider()
+
                 Button("Fetch Origin") {
                     NotificationCenter.default.post(name: NSNotification.Name("FetchOriginAction"), object: nil)
                 }
@@ -517,5 +541,6 @@ struct GitXXApp: App {
 
 // Tooltips (`.help`) appear after ~0.25s instead of AppKit's ~1s default, so icon-only buttons are easy to identify.
 UserDefaults.standard.set(250, forKey: "NSInitialToolTipDelay")
+KeyboardNavigation.applyPreference()
 DevFixtures.runIfRequested()
 GitXXApp.main()

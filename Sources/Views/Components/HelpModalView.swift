@@ -99,7 +99,7 @@ public struct HelpModalView: View {
                     )
                     .foregroundStyle(selectedSection == section ? Color.white : Color.secondary)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.hoverPlain)
             }
         }
         .padding(3)
@@ -190,10 +190,17 @@ public struct HelpModalView: View {
                 )
 
                 featureCard(
+                    icon: "play.circle",
+                    title: "Actions",
+                    description: "GitHub Actions runs with branch, workflow, status and actor filters, per-step logs, re-runs, artifacts and manual dispatch.",
+                    tag: "⌘4"
+                )
+
+                featureCard(
                     icon: "terminal.fill",
                     title: "Embedded Terminal",
                     description: "Full interactive terminal with support for zsh, bash, and fish, preloaded with git aliases.",
-                    tag: "⌘4"
+                    tag: "⌘5"
                 )
 
                 featureCard(
@@ -282,7 +289,7 @@ public struct HelpModalView: View {
                     }
                     .foregroundStyle(state.accentTheme.primaryColor)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.hoverPlain)
             }
 
             VStack(spacing: 6) {
@@ -346,7 +353,7 @@ public struct HelpModalView: View {
                 title: "Generating AI Commit Messages",
                 steps: [
                     "Stage the files you want to commit in the Changes tab (⌘1).",
-                    "Click the '✨ AI' button in the commit box header or press ⌘I.",
+                    "Click the AI button next to the commit summary or press ⌘I.",
                     "Review the generated commit summary and description, make any edits, and commit with ⌘Enter."
                 ]
             )

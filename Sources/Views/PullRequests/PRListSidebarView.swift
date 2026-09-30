@@ -56,7 +56,7 @@ public struct PRListSidebarView: View {
                                 .foregroundStyle(.secondary)
                                 .font(.system(size: 10))
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.hoverPlain)
                     }
                 }
                 .padding(.horizontal, 8)
@@ -92,7 +92,7 @@ public struct PRListSidebarView: View {
                     Button("Exit") {
                         state.resetToLivePRs()
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.hoverPlain)
                     .font(.system(size: 10.5, weight: .bold))
                     .foregroundStyle(state.accentTheme.primaryColor)
                 }
@@ -141,6 +141,7 @@ public struct PRListSidebarView: View {
                         }
                 }
                 .listStyle(.sidebar)
+                .scrollContentBackground(.hidden)
             }
 
             Divider()
@@ -219,7 +220,7 @@ public struct PRListSidebarView: View {
                     }
                     .font(.system(size: 10.5))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.hoverPlain)
                 .foregroundStyle(Color.secondary)
             }
 
@@ -281,7 +282,7 @@ public struct PRListSidebarView: View {
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(Color.secondary)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.hoverPlain)
             }
 
             Spacer()
@@ -342,7 +343,7 @@ public struct PRListSidebarView: View {
                 Label("New Pull Request", systemImage: "plus")
                     .font(.system(size: 12, weight: .medium))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.hoverPlain)
 
             Spacer()
 
@@ -353,12 +354,12 @@ public struct PRListSidebarView: View {
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.hoverPlain)
             .help("Refresh pull requests")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(Color(NSColor.windowBackgroundColor))
+        .themedSurface(state.accentTheme, .toolbar)
     }
 
     @ViewBuilder

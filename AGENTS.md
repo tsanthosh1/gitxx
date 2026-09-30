@@ -22,6 +22,7 @@ GitXX is a native macOS application built using **Swift 5.9+**, **SwiftUI**, **A
   - `PullRequests/`: PR list sidebar, detail view, WebKit conversation stream (`PRConversationWebView.swift`, `ConversationHTMLBuilder.swift`), and diff viewer.
   - `Changes/`: Staged/unstaged files list, commit message box, AI commit assistant.
   - `History/`: Commit graph, log sidebar, and commit detail inspector.
+ - `Actions/`: GitHub Actions tab: searchable workflow sidebar, run list with filters, run detail (jobs, per-step logs, annotations, artifacts), and the workflow_dispatch sheet. State lives in `Sources/State/ActionsStore.swift`, owned by `AppState.actions`.
   - `Terminal/`: Embedded interactive PTY terminal emulator.
   - `Components/`: Popovers, sheets (Settings, Help, Auth), toasts, and top toolbars.
 

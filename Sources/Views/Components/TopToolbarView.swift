@@ -7,7 +7,6 @@ public struct TopToolbarView: View {
     @State private var isRepoHovered: Bool = false
     @State private var isBranchHovered: Bool = false
     @State private var hoveredTab: AppTab? = nil
-    @State private var showUserProfilePopover: Bool = false
     @State private var isHomeHovered: Bool = false
     static let homeButtonWidth: CGFloat = 44
 
@@ -33,7 +32,7 @@ public struct TopToolbarView: View {
             .frame(height: 52)
         }
         .frame(height: 52)
-        .background(.ultraThinMaterial)
+        .themedSurface(state.accentTheme, .toolbar)
         .overlay(alignment: .bottom) {
             Rectangle()
                 .fill(Color.primary.opacity(0.08))
@@ -56,7 +55,7 @@ public struct TopToolbarView: View {
                     .background(isHomeHovered ? Color.primary.opacity(0.07) : Color.clear)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.hoverPlain)
             .onHover { isHomeHovered = $0 }
             .help("Home: recent repositories and your pull requests (⇧⌘H)")
 
@@ -179,7 +178,7 @@ public struct TopToolbarView: View {
             .frame(height: 52)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.hoverPlain)
         .help(fullTitle)
         .animation(.easeOut(duration: 0.1), value: isHovered)
     }
@@ -253,16 +252,7 @@ public struct TopToolbarView: View {
                 .padding(.horizontal, 1)
 
             // User Identity Avatar Button
-            Button {
-                showUserProfilePopover.toggle()
-            } label: {
-                UserAvatarView(profile: state.activeProfile, size: 28)
-            }
-            .buttonStyle(.plain)
-            .help("Git Identity: \(state.activeProfile.name) <\(state.activeProfile.email)>. Click to switch.")
-            .popover(isPresented: $showUserProfilePopover, arrowEdge: .bottom) {
-                UserProfilePopoverView(state: state)
-            }
+            ProfileAvatarButton(state: state, size: 28)
         }
         .padding(.trailing, isCompact ? 8 : 12)
     }
@@ -477,9 +467,9 @@ private struct NavTabButton: View {
             .background(backgroundFill)
             .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.hoverPlain)
         .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-        .help("\(tab.rawValue) (⌘\(tab.rawValue == "Changes" ? "1" : tab.rawValue == "History" ? "2" : tab.rawValue == "Pull Requests" ? "3" : "4"))")
+        .help("\(tab.rawValue) (⌘\(String(tab.keyboardShortcutKey.character)))")
         .onHover { isHovered = $0 }
     }
 

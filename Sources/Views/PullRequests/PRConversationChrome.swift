@@ -23,6 +23,14 @@ struct PRChromeContainer<Content: View>: View {
                 chromeStack
                     .transition(.opacity)
                     .zIndex(1)
+            } else {
+                PRShowChromeButton(pr: pr) {
+                    setHidden(false)
+                    NotificationCenter.default.post(name: .gitxxShowPRChrome, object: nil)
+                }
+                .padding(.top, 10)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+                .zIndex(2)
             }
         }
         .clipped()
@@ -38,7 +46,7 @@ struct PRChromeContainer<Content: View>: View {
             PRDetailHeaderView(state: state, pr: pr)
             Divider()
         }
-        .background(Color(NSColor.windowBackgroundColor))
+        .themedSurface(state.accentTheme, .toolbar)
         .background(
             GeometryReader { geo in
                 Color.clear
@@ -67,4 +75,56 @@ struct PRChromeContainer<Content: View>: View {
 @MainActor
 enum PRChromeMetrics {
     static var lastChromeHeight: CGFloat = 150
+}
+
+extension Notification.Name {
+    /// Asks the PR web views to reset their hide-on-scroll state and show the bars.
+    static let gitxxShowPRChrome = Notification.Name("GitXXShowPRChrome")
+}
+
+/// Floating glass pill shown while the PR bars are scrolled away; brings them back.
+private struct PRShowChromeButton: View {
+    let pr: PullRequest
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 7) {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 10, weight: .bold))
+                Text("#\(String(pr.number))")
+                    .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                Text(pr.title)
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: 280, alignment: .leading)
+                    .fixedSize(horizontal: true, vertical: false)
+                Text("Show toolbar")
+                    .font(.system(size: 11, weight: .semibold))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2)
+                    .background(Color.primary.opacity(0.1), in: Capsule())
+            }
+            .padding(.leading, 12)
+            .padding(.trailing, 6)
+            .frame(height: 30)
+            .background(.ultraThinMaterial, in: Capsule())
+            .background(Color.primary.opacity(hovering ? 0.08 : 0.02), in: Capsule())
+            .overlay(
+                Capsule().strokeBorder(
+                    LinearGradient(colors: [Color.white.opacity(0.35), Color.white.opacity(0.08)], startPoint: .top, endPoint: .bottom),
+                    lineWidth: 1)
+            )
+            .shadow(color: .black.opacity(0.25), radius: hovering ? 12 : 8, y: 4)
+            .scaleEffect(hovering ? 1.03 : 1)
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.hoverPlain)
+        .pointerCursor()
+        .onHover { inside in withAnimation(.easeOut(duration: 0.12)) { hovering = inside } }
+        .help("Show the toolbar and PR header")
+    }
 }

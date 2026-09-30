@@ -94,7 +94,7 @@ public struct AIAuthPopoverView: View {
         }
         .padding(14)
         .frame(width: 320)
-        .background(.ultraThinMaterial)
+        .themedSurface(state.accentTheme, .elevated)
     }
 
     // MARK: - Copilot Section
@@ -118,7 +118,7 @@ public struct AIAuthPopoverView: View {
                     Button("Disconnect") {
                         state.disconnectCopilot()
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.hoverPlain)
                     .font(.system(size: 11))
                     .foregroundStyle(.red.opacity(0.85))
                 }
@@ -200,7 +200,7 @@ public struct AIAuthPopoverView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 6))
                 .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.white.opacity(0.08), lineWidth: 1))
 
-                Text("Your GitHub Copilot subscription is ready. Click the ✨ button in the commit box to generate commit messages.")
+                Text("Your GitHub Copilot subscription is ready. Click the AI button in the commit box to generate commit messages.")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
@@ -271,7 +271,7 @@ public struct AIAuthPopoverView: View {
                     .background(state.accentTheme.linearGradient)
                     .clipShape(RoundedRectangle(cornerRadius: 6))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.hoverPlain)
 
                 Button {
                     state.checkCopilotStatus()
@@ -289,7 +289,7 @@ public struct AIAuthPopoverView: View {
                     }
                     .foregroundStyle(.secondary)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.hoverPlain)
             }
         }
     }

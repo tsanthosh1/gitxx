@@ -9,6 +9,8 @@ public struct GitHubURLTarget: Equatable, Sendable {
         case pullRequest(number: Int, tab: PRDetailTab)
         case branch(String)
         case commit(String)
+        case actions(workflowFile: String?)
+        case actionsRun(runId: Int, jobId: Int?)
     }
 
     public let owner: String
@@ -54,6 +56,14 @@ public struct GitHubURLTarget: Equatable, Sendable {
         case "commit":
             guard rest.count >= 2 else { return nil }
             kind = .commit(rest[1])
+        case "actions":
+            // /actions, /actions/workflows/{file}, /actions/runs/{id}[/job/{id}|/attempts/{n}]
+            if rest.count >= 3, rest[1] == "runs", let runId = Int(rest[2]) {
+                let jobId = rest.count >= 5 && rest[3] == "job" ? Int(rest[4]) : nil
+                kind = .actionsRun(runId: runId, jobId: jobId)
+            } else {
+                kind = .actions(workflowFile: rest.count >= 3 && rest[1] == "workflows" ? rest[2] : nil)
+            }
         default:
             kind = .repository
         }
@@ -73,6 +83,8 @@ public struct GitHubURLTarget: Equatable, Sendable {
             }
         case .branch(let b): return "Check out branch \(b)"
         case .commit(let sha): return "Show commit \(sha.prefix(7))"
+        case .actions(let file): return file.map { "Actions · \($0)" } ?? "Actions in \(slug)"
+        case .actionsRun(let runId, let jobId): return jobId == nil ? "Open workflow run \(runId)" : "Open workflow run \(runId) · job \(jobId!)"
         }
     }
 }
@@ -126,7 +138,46 @@ extension AppState {
             } else {
                 showToast("Commit \(sha.prefix(7)) isn't in the loaded history", type: .info)
             }
+        case .actions(let file):
+            activeTab = .actions
+            actions.activate()
+            if let file {
+                for _ in 0..<40 where actions.workflows.isEmpty { try? await Task.sleep(nanoseconds: 50_000_000) }
+                actions.filter.workflowId = actions.workflows.first { $0.fileName == file }?.id
+            }
+        case .actionsRun(let runId, let jobId):
+            openActionsRun(runId: runId, jobId: jobId)
         }
+    }
+
+    /// Switches to the Actions tab and opens a run (used by PR checks, links and the palette).
+    public func openActionsRun(runId: Int, jobId: Int? = nil) {
+        activeTab = .actions
+        actions.activate()
+        actions.openRun(id: runId, jobId: jobId)
+        recordNavigationStep()
+    }
+
+    /// Opens the newest run for a branch, loading the branch's runs first.
+    public func openLatestActionsRun(branch: String?) {
+        showActions(branch: branch)
+        Task {
+            for _ in 0..<60 {
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                if !actions.isLoadingRuns, let run = actions.runs.first(where: { branch == nil || $0.headBranch == branch }) {
+                    actions.selectRun(run)
+                    recordNavigationStep()
+                    return
+                }
+            }
+        }
+    }
+
+    /// Actions tab filtered to a branch, e.g. a PR's head branch.
+    public func showActions(branch: String?, workflowId: Int? = nil) {
+        activeTab = .actions
+        actions.activate()
+        actions.show(branch: branch, workflowId: workflowId)
     }
 
     /// Opens a PR in the current repository, fetching it if it isn't in the loaded list.

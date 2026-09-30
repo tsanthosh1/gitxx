@@ -91,7 +91,7 @@ public struct WindowTopBarView: View {
                     .padding(.horizontal, 4)
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.hoverPlain)
                 .onHover { isRepoHovered = $0 }
                 .help("Switch repository (⌘O)")
 
@@ -131,7 +131,7 @@ public struct WindowTopBarView: View {
                     .padding(.horizontal, 4)
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.hoverPlain)
                 .onHover { isBranchHovered = $0 }
                 .help("Switch or create branch (⌘B)")
             }
@@ -140,6 +140,8 @@ public struct WindowTopBarView: View {
 
             // Right-aligned utility buttons in the title bar
             HStack(spacing: 4) {
+                OpenWithTitleButton(state: state)
+
                 // Copy Page Web Link
                 WindowTopBarIconButton(
                     systemName: "link",
@@ -150,7 +152,7 @@ public struct WindowTopBarView: View {
 
                 // Open in Web Browser
                 WindowTopBarIconButton(
-                    systemName: "arrow.up.right.square",
+                    systemName: "globe",
                     helpText: "Open current view in browser"
                 ) {
                     state.openCurrentInBrowser()
@@ -200,7 +202,41 @@ public struct WindowTopBarView: View {
         }
         .frame(height: 30)
         .background(WindowDragArea())
-        .background(.ultraThinMaterial)
+        .themedSurface(state.accentTheme, .titleBar)
+    }
+}
+
+// MARK: - Open with
+
+private struct OpenWithTitleButton: View {
+    @ObservedObject var state: AppState
+    @State private var isHovered = false
+
+    var body: some View {
+        let targets = state.openWithTargets
+        Button { state.showOpenWith.toggle() } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "arrow.up.forward.app")
+                    .font(.system(size: 11, weight: .medium))
+                Text("Open with")
+                    .font(.system(size: 11, weight: .medium))
+            }
+            .foregroundStyle(targets.isEmpty ? Color.secondary.opacity(0.3) : (isHovered || state.showOpenWith ? Color.primary : Color.secondary))
+            .padding(.horizontal, 7)
+            .frame(height: 22)
+            .background(
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .fill(isHovered || state.showOpenWith ? Color.primary.opacity(0.08) : Color.clear)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.hoverPlain)
+        .disabled(targets.isEmpty)
+        .onHover { isHovered = $0 }
+        .help("Open the current file, repository or page in another app (⌥⌘O)")
+        .popover(isPresented: $state.showOpenWith, arrowEdge: .bottom) {
+            OpenWithPopover(state: state, targets: targets)
+        }
     }
 }
 
@@ -228,7 +264,7 @@ private struct WindowTopBarIconButton: View {
                 )
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.hoverPlain)
         .disabled(disabled)
         .onHover { isHovered = $0 }
         .help(helpText)

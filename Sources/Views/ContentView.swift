@@ -42,12 +42,15 @@ public struct ContentView: View {
                         } else if state.activeTab == .pullRequests {
                             PullRequestsContainerView(state: state)
                                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        } else if state.activeTab == .actions {
+                            ActionsContainerView(state: state, store: state.actions)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
                         } else {
                             HSplitView {
                                 // Left Sidebar Pane
                                 sidebarContent
                                     .frame(minWidth: 220, idealWidth: 300, maxWidth: 580)
-                                    .background(.regularMaterial)
+                                    .themedSurface(state.accentTheme, .sidebar)
 
                                 // Right Main Detail Pane
                                 detailContent
@@ -92,6 +95,11 @@ public struct ContentView: View {
                     .clipped()
                     }
                 }
+                // Otherwise trackpad scrolls over the palette reach the page underneath.
+                .allowsHitTesting(!state.showCommandPalette)
+
+                ActionsFullScreenLogHost(state: state, store: state.actions)
+                    .padding(.top, 30)
 
                 // AI assistant bubble / panel (bottom-right, ⌘I)
                 AIChatOverlay(state: state)
@@ -191,6 +199,8 @@ public struct ContentView: View {
                     ))
                 }
             }
+            .background(ThemedWindowWash(theme: state.accentTheme).allowsHitTesting(false))
+            .environment(\.themeCanvas, geo.frame(in: .global))
             .onAppear {
                 state.isReducedWidth = isReduced
                 state.isNarrowWidth = geo.size.width < 780
@@ -207,6 +217,12 @@ public struct ContentView: View {
         // Sheets
         .sheet(isPresented: $state.showStashDrawer) {
             StashDrawerView(state: state)
+        }
+        .sheet(item: $state.conflictResolverRequest) { request in
+            ConflictsListSheet(state: state, request: request)
+        }
+        .sheet(item: $state.newBranchRequest) { request in
+            NewBranchSheet(state: state, request: request)
         }
         .sheet(item: $state.tagTargetCommit) { commit in
             CreateTagSheet(state: state, commit: commit)
@@ -245,7 +261,14 @@ public struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("DevScene"))) { note in
             DevFixtures.applyScene(note.object as? String ?? "", state: state)
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("ShowOpenWith"))) { _ in
+            if !state.openWithTargets.isEmpty { state.showOpenWith.toggle() }
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("SwitchTabPRs"))) { _ in
+            if state.showHome {
+                state.homeTab = .conversations
+                return
+            }
             withAnimation(.easeInOut(duration: 0.15)) {
                 state.selectedPR = nil
                 state.activeTab = .pullRequests
@@ -254,11 +277,28 @@ public struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("ToggleAIChat"))) { _ in
             AIChatStore.shared.toggle()
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("NewBranchAction"))) { _ in
+            state.beginNewBranch()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("ToggleAIVoice"))) { _ in
+            AIChatStore.shared.toggleVoice()
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("GoHomeAction"))) { _ in
             withAnimation(.easeInOut(duration: 0.12)) { state.goHome() }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("SwitchTabTerminal"))) { _ in
             state.activeTab = .terminal
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("SwitchTabActions"))) { _ in
+            state.activeTab = .actions
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("OpenGitHubLinkInApp"))) { note in
+            guard let url = note.object as? URL else { return }
+            if let target = GitHubURLTarget.parse(url.absoluteString), state.localRepository(owner: target.owner, repo: target.repo) != nil {
+                state.openGitHubTarget(target)
+            } else {
+                NSWorkspace.shared.open(url)
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RunDemoTerminalCommand"))) { _ in
             state.runTerminalCommand("gs")
@@ -352,7 +392,7 @@ public struct ContentView: View {
             ChangesSidebarView(state: state)
         case .history:
             CommitLogSidebarView(state: state)
-        case .pullRequests, .terminal:
+        case .pullRequests, .actions, .terminal:
             EmptyView()
         }
     }
@@ -366,7 +406,7 @@ public struct ContentView: View {
             DiffViewer(state: state)
         case .history:
             CommitDetailView(state: state)
-        case .pullRequests:
+        case .pullRequests, .actions:
             EmptyView()
         case .terminal:
             TerminalView(state: state)

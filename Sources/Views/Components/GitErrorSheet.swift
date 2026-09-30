@@ -9,6 +9,21 @@ struct GitErrorSheet: View {
     @State private var runningAction: UUID?
     @State private var pendingConfirmation: GitFixAction?
     @State private var showDetails = false
+    @State private var review: DiffReview?
+    /// Set once the diff review closes, so the user can retry after stashing or reverting files there.
+    @State private var reviewed: Bool
+
+    init(state: AppState, error: GitOperationError, startReviewed: Bool = false) {
+        self.state = state
+        self.error = error
+        _reviewed = State(initialValue: startReviewed)
+        _showDetails = State(initialValue: error.showOutput)
+    }
+
+    private struct DiffReview: Identifiable {
+        let id = UUID()
+        let initial: String
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -26,15 +41,23 @@ struct GitErrorSheet: View {
                 }
             }
 
+            if !error.highlights.isEmpty {
+                highlightsBox
+            }
+
             if !error.files.isEmpty {
                 filesList
             }
 
             detailsSection
 
+            if reviewed, let retry = error.retry {
+                retryBanner(retry)
+            }
+
             VStack(spacing: 7) {
                 ForEach(error.actions) { action in
-                    actionButton(action)
+                    actionButton(action, isDefault: action.role == .primary && !(reviewed && error.retry != nil))
                 }
             }
 
@@ -56,6 +79,13 @@ struct GitErrorSheet: View {
         .padding(20)
         .frame(width: 580)
         .disabled(runningAction != nil)
+        .sheet(item: $review, onDismiss: { withAnimation(.easeOut(duration: 0.15)) { reviewed = true } }) { request in
+            ChangedFilesDiffSheet(state: state, title: "Local changes blocking this \(error.title.lowercased().hasPrefix("pull") ? "pull" : "operation")",
+                                  paths: error.files.filter { changedPaths.contains($0) } + error.files.filter { !changedPaths.contains($0) },
+                                  initial: request.initial) { path in
+                state.inspectFileFromError(path)
+            }
+        }
         .confirmationDialog(
             pendingConfirmation?.title ?? "",
             isPresented: Binding(get: { pendingConfirmation != nil }, set: { if !$0 { pendingConfirmation = nil } }),
@@ -82,8 +112,10 @@ struct GitErrorSheet: View {
         return text
     }
 
+    private var changedPaths: Set<String> { Set(state.files.map(\.path)) }
+
     private var filesList: some View {
-        let changedPaths = Set(state.files.map(\.path))
+        let changedPaths = changedPaths
         return VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Text(error.files.count == 1 ? "1 file" : "\(error.files.count) files")
@@ -98,8 +130,20 @@ struct GitErrorSheet: View {
                     Label("Copy paths", systemImage: "doc.on.doc")
                         .font(.system(size: 11))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.hoverPlain)
                 .foregroundStyle(.secondary)
+                if let first = error.files.first(where: { changedPaths.contains($0) }) {
+                    Button {
+                        review = DiffReview(initial: first)
+                    } label: {
+                        Label("Review all diffs", systemImage: "doc.text.magnifyingglass")
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    .buttonStyle(.hoverPlain)
+                    .foregroundStyle(state.accentTheme.primaryColor)
+                    .pointerCursor()
+                    .padding(.leading, 10)
+                }
             }
             .padding(.horizontal, 10)
             .padding(.top, 7)
@@ -114,12 +158,12 @@ struct GitErrorSheet: View {
                                 .fixedSize(horizontal: false, vertical: true)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                             if changedPaths.contains(file) {
-                                Button("View changes") { state.inspectFileFromError(file) }
-                                    .buttonStyle(.plain)
+                                Button("View changes") { review = DiffReview(initial: file) }
+                                    .buttonStyle(.hoverPlain)
                                     .font(.system(size: 11, weight: .medium))
                                     .foregroundStyle(state.accentTheme.primaryColor)
                                     .pointerCursor()
-                                    .help("Show this file's diff on the Changes tab; you can come back to these fixes from there")
+                                    .help("Review this file's diff (and the others) in a separate window without leaving these fixes")
                             }
                         }
                         .padding(.vertical, 2)
@@ -134,6 +178,31 @@ struct GitErrorSheet: View {
         .clipShape(RoundedRectangle(cornerRadius: 7))
     }
 
+    private var highlightsBox: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text("What failed")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+            ForEach(Array(error.highlights.enumerated()), id: \.offset) { _, line in
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Image(systemName: "xmark.octagon.fill")
+                        .font(.system(size: 9.5))
+                        .foregroundStyle(.red)
+                    Text(line)
+                        .font(.system(size: 11.5, design: .monospaced))
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.red.opacity(0.08))
+        .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.red.opacity(0.25)))
+        .clipShape(RoundedRectangle(cornerRadius: 7))
+    }
+
     private var detailsSection: some View {
         VStack(alignment: .leading, spacing: 6) {
             Button {
@@ -142,13 +211,13 @@ struct GitErrorSheet: View {
                 HStack(spacing: 4) {
                     Image(systemName: showDetails ? "chevron.down" : "chevron.right")
                         .font(.system(size: 9, weight: .bold))
-                    Text("Git output")
+                    Text(error.highlights.isEmpty ? "Git output" : "Full output")
                         .font(.system(size: 11.5, weight: .medium))
                 }
                 .foregroundStyle(.secondary)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.hoverPlain)
             if showDetails {
                 ScrollView {
                     Text(error.details)
@@ -164,7 +233,43 @@ struct GitErrorSheet: View {
         }
     }
 
-    private func actionButton(_ action: GitFixAction) -> some View {
+    private func retryBanner(_ retry: GitFixAction) -> some View {
+        let changed = changedPaths
+        let remaining = error.files.filter { changed.contains($0) }.count
+        let clear = remaining == 0
+        return HStack(spacing: 10) {
+            Image(systemName: clear ? "checkmark.circle.fill" : "info.circle.fill")
+                .font(.system(size: 15))
+                .foregroundStyle(clear ? Color.green : Color.secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(clear ? "Blocking changes are out of the way" : "\(remaining) of \(error.files.count) file\(error.files.count == 1 ? "" : "s") still changed")
+                    .font(.system(size: 12.5, weight: .semibold))
+                Text(clear ? "Retry now to run it again." : "Retry anyway, or use one of the fixes below.")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 8)
+            Button { run(retry) } label: {
+                HStack(spacing: 6) {
+                    if runningAction == retry.id {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Image(systemName: retry.systemImage)
+                    }
+                    Text(retry.title)
+                }
+            }
+            .buttonStyle(PRActionButtonStyle(.primary(state.accentTheme.primaryColor)))
+            .keyboardShortcut(.defaultAction)
+        }
+        .padding(10)
+        .background(state.accentTheme.primaryColor.opacity(0.10))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(state.accentTheme.primaryColor.opacity(0.35)))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .transition(.opacity.combined(with: .move(edge: .top)))
+    }
+
+    private func actionButton(_ action: GitFixAction, isDefault: Bool) -> some View {
         Button {
             if action.confirmation != nil { pendingConfirmation = action } else { run(action) }
         } label: {
@@ -181,7 +286,7 @@ struct GitErrorSheet: View {
             .frame(maxWidth: .infinity)
         }
         .buttonStyle(PRActionButtonStyle(style(for: action.role)))
-        .keyboardShortcut(action.role == .primary ? .defaultAction : nil)
+        .keyboardShortcut(isDefault ? .defaultAction : nil)
     }
 
     private func style(for role: GitFixAction.Role) -> PRActionButtonStyle.Kind {

@@ -25,8 +25,11 @@ struct AIChatOverlay: View {
                             .frame(width: size.width, height: size.height)
                             .transition(.scale(scale: 0.85, anchor: .bottomTrailing).combined(with: .opacity))
                     } else {
-                        AIChatBubble(chat: chat, accent: state.accentTheme.primaryColor)
-                            .transition(.scale(scale: 0.6).combined(with: .opacity))
+                        HStack(alignment: .center, spacing: 8) {
+                            AIVoiceBubble(chat: chat, accent: state.accentTheme.primaryColor)
+                            AIChatBubble(chat: chat, accent: state.accentTheme.primaryColor)
+                        }
+                        .transition(.scale(scale: 0.6, anchor: .trailing).combined(with: .opacity))
                     }
                 }
             }
@@ -73,7 +76,7 @@ private struct AIChatBubble: View {
             .scaleEffect(hovering ? 1.06 : 1)
             .contentShape(Circle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.hoverPlain)
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: 0.12), value: hovering)
         .pointerCursor()
@@ -81,10 +84,72 @@ private struct AIChatBubble: View {
     }
 }
 
+/// Small mic beside the bubble: opens the assistant already listening.
+private struct AIVoiceBubble: View {
+    @ObservedObject var chat: AIChatStore
+    let accent: Color
+    @State private var hovering = false
+
+    var body: some View {
+        Button { chat.toggleVoice() } label: {
+            Image(systemName: "mic.fill")
+                .font(.system(size: 12.5, weight: .semibold))
+                .foregroundStyle(hovering ? Color.white : Color.primary.opacity(0.85))
+                .frame(width: 30, height: 30)
+                .background(Circle().fill(hovering ? accent : SurfaceStyle.elevatedBase))
+                .overlay(Circle().stroke(hovering ? Color.clear : Color.primary.opacity(0.14)))
+                .shadow(color: .black.opacity(0.3), radius: hovering ? 8 : 5, y: 2)
+                .scaleEffect(hovering ? 1.06 : 1)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.hoverPlain)
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
+        .pointerCursor()
+        .help("Talk to the assistant (⌥⌘I)")
+    }
+}
+
+/// Composer mic: a pulsing red stop button while listening.
+private struct AIVoiceButton: View {
+    @ObservedObject var chat: AIChatStore
+    @ObservedObject var voice = AIVoiceInput.shared
+
+    var body: some View {
+        Button { AIVoiceInput.shared.toggle(chat: chat) } label: {
+            ZStack {
+                if voice.isRecording {
+                    Circle()
+                        .fill(Color.red.opacity(0.28))
+                        .scaleEffect(1 + CGFloat(voice.level) * 0.55)
+                        .animation(.easeOut(duration: 0.1), value: voice.level)
+                    Circle().fill(Color.red)
+                    Image(systemName: "stop.fill")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.white)
+                } else if voice.isStarting {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: "mic")
+                        .font(.system(size: 13.5, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(width: 28, height: 28)
+            .contentShape(Circle())
+        }
+        .buttonStyle(.hoverPlain)
+        .pointerCursor()
+        .help(voice.isRecording ? "Stop dictation (⌥⌘I)" : "Dictate (⌥⌘I)")
+    }
+}
+
 private struct AIChatPanel: View {
     @ObservedObject var state: AppState
     @ObservedObject var chat: AIChatStore
+    @ObservedObject var voice = AIVoiceInput.shared
     @FocusState private var inputFocused: Bool
+    @State private var showHistory = false
 
     private var liveContext: AIPageContext { AIPageContext.capture(from: state) }
 
@@ -96,14 +161,13 @@ private struct AIChatPanel: View {
             Divider()
             composer
         }
-        .background(.regularMaterial)
-        .background(Color(NSColor.windowBackgroundColor).opacity(0.6))
+        .themedSurface(state.accentTheme, .elevated)
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Color.primary.opacity(0.12)))
         .shadow(color: .black.opacity(0.4), radius: 24, y: 8)
         .onAppear { DispatchQueue.main.async { inputFocused = true } }
         .onKeyPress(.escape) {
-            chat.toggle()
+            if voice.isRecording || voice.isStarting { voice.stop() } else if chat.isRunning { chat.stop() } else { chat.toggle() }
             return .handled
         }
     }
@@ -140,16 +204,27 @@ private struct AIChatPanel: View {
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
+            .iconHover()
             .help("Chat options")
+
+            Button { showHistory.toggle() } label: {
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.icon(active: showHistory))
+            .help("Previous conversations")
+            .popover(isPresented: $showHistory, arrowEdge: .bottom) {
+                AIChatHistoryList(chat: chat, compact: true) { showHistory = false }
+                    .frame(width: 360, height: 440)
+            }
 
             Button { chat.newChat() } label: {
                 Image(systemName: "square.and.pencil")
                     .font(.system(size: 13))
                     .foregroundStyle(.secondary)
-                    .frame(width: 24, height: 24)
-                    .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.icon)
             .disabled(chat.items.isEmpty)
             .help("New chat")
 
@@ -157,10 +232,8 @@ private struct AIChatPanel: View {
                 Image(systemName: chat.isExpanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
                     .font(.system(size: 11.5, weight: .semibold))
                     .foregroundStyle(.secondary)
-                    .frame(width: 24, height: 24)
-                    .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.icon)
             .keyboardShortcut("i", modifiers: [.command, .shift])
             .help(chat.isExpanded ? "Restore size (⇧⌘I)" : "Enlarge (⇧⌘I)")
 
@@ -168,10 +241,8 @@ private struct AIChatPanel: View {
                 Image(systemName: "chevron.down")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.secondary)
-                    .frame(width: 24, height: 24)
-                    .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.icon)
             .help("Minimize (⌘I)")
         }
         .padding(.horizontal, 12)
@@ -202,9 +273,20 @@ private struct AIChatPanel: View {
                             Text("Working…")
                                 .font(.system(size: 12))
                                 .foregroundStyle(.secondary)
+                            Spacer(minLength: 8)
+                            Button { chat.stop() } label: {
+                                Label("Stop", systemImage: "stop.fill")
+                                    .font(.system(size: 11, weight: .medium))
+                            }
+                            .buttonStyle(PRActionButtonStyle(.secondary, size: .compact))
+                            .fixedSize()
+                            .help("Stop the assistant and kill the command it's running (Esc)")
                         }
                         .padding(.leading, 4)
                         .id("working")
+                    } else if !chat.isRunning, let choices = chat.quickReplies {
+                        quickReplyRow(choices)
+                            .id("choices")
                     }
                     Color.clear.frame(height: 1).id("bottom")
                 }
@@ -218,6 +300,31 @@ private struct AIChatPanel: View {
             .onChange(of: chat.isRunning) { _, _ in proxy.scrollTo("bottom", anchor: .bottom) }
             .onAppear { proxy.scrollTo("bottom", anchor: .bottom) }
         }
+    }
+
+    private func quickReplyRow(_ choices: [String]) -> some View {
+        HStack(spacing: 6) {
+            ForEach(Array(choices.enumerated()), id: \.offset) { index, choice in
+                Button { chat.send(choice, state: state) } label: {
+                    HStack(spacing: 5) {
+                        Text(choice)
+                            .lineLimit(1)
+                        if index < 9 {
+                            Text("⌘\(index + 1)")
+                                .font(.system(size: 9.5, weight: .semibold))
+                                .opacity(0.6)
+                        }
+                    }
+                    .font(.system(size: 12, weight: .medium))
+                }
+                .buttonStyle(PRActionButtonStyle(index == 0 ? .primary(state.accentTheme.primaryColor) : .secondary, size: .compact))
+                .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: .command)
+                .fixedSize()
+                .pointerCursor()
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.leading, 2)
     }
 
     private var suggestions: [String] {
@@ -262,7 +369,7 @@ private struct AIChatPanel: View {
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.hoverPlain)
                 .pointerCursor()
             }
         }
@@ -287,14 +394,30 @@ private struct AIChatPanel: View {
             .clipShape(Capsule())
             .help("Sent with your message so the assistant knows what you're looking at")
 
+            if let problem = voice.problem {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "mic.slash")
+                        .foregroundStyle(.orange)
+                    Text(problem)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 4)
+                    Button { voice.problem = nil } label: { Image(systemName: "xmark") }
+                        .buttonStyle(.hoverPlain)
+                        .foregroundStyle(.secondary)
+                }
+                .font(.system(size: 11))
+            }
+
             HStack(alignment: .bottom, spacing: 8) {
-                TextField(chat.isRunning ? "Working… you can type the next message" : "Ask anything  (↩ send, ⌥↩ new line)", text: $chat.input, axis: .vertical)
+                TextField(voice.isRecording ? "Listening… speak now  (↩ send)" : chat.isRunning ? "Working… you can type the next message" : "Ask anything  (↩ send, ⌥↩ new line)", text: $chat.input, axis: .vertical)
                     .textFieldStyle(.plain)
                     .font(.system(size: 13))
                     .lineLimit(1...6)
                     .focused($inputFocused)
                     .onSubmit { chat.send(state: state) }
                     .padding(.vertical, 6)
+
+                AIVoiceButton(chat: chat)
 
                 if chat.isRunning {
                     Button { chat.stop() } label: {
@@ -305,7 +428,7 @@ private struct AIChatPanel: View {
                             .background(Color.secondary)
                             .clipShape(Circle())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.hoverPlain)
                     .help("Stop")
                 } else {
                     let empty = chat.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -317,7 +440,7 @@ private struct AIChatPanel: View {
                             .background(empty ? Color.secondary.opacity(0.4) : state.accentTheme.primaryColor)
                             .clipShape(Circle())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.hoverPlain)
                     .disabled(empty)
                     .help("Send (↩)")
                 }
@@ -327,7 +450,7 @@ private struct AIChatPanel: View {
             .padding(.vertical, 3)
             .background(Color(NSColor.textBackgroundColor).opacity(0.7))
             .clipShape(RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(inputFocused ? 0.2 : 0.1)))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(voice.isRecording ? Color.red.opacity(0.6) : Color.primary.opacity(inputFocused ? 0.2 : 0.1)))
         }
         .padding(10)
         .frame(maxWidth: columnWidth.map { $0 + 4 })
@@ -358,7 +481,7 @@ private struct AIChatItemView: View {
             .frame(maxWidth: .infinity, alignment: .trailing)
             .padding(.leading, 40)
         case .assistant(let text):
-            AIMarkdownText(text: text)
+            AIMarkdownText(text: AIQuickReplies.stripMarker(text))
                 .frame(maxWidth: .infinity, alignment: .leading)
         case .tool(_, let summary, let status, let output):
             AIToolRunView(id: item.id, summary: summary, status: status, output: output, chat: chat, accent: accent)
@@ -412,7 +535,7 @@ private struct AIToolRunView: View {
                 .frame(minHeight: 28)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.hoverPlain)
 
             if status == .awaitingApproval {
                 VStack(alignment: .leading, spacing: 8) {
@@ -552,7 +675,7 @@ private struct AIUsageChip: View {
                 .clipShape(Capsule())
                 .contentShape(Capsule())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.hoverPlain)
             .help("Usage in this chat")
             .popover(isPresented: $showDetails, arrowEdge: .bottom) { details }
         }

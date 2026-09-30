@@ -34,7 +34,7 @@ public struct CommitLogSidebarView: View {
                             .foregroundStyle(.secondary)
                             .font(.system(size: 10))
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.hoverPlain)
                 }
             }
             .padding(.horizontal, 10)
@@ -82,6 +82,7 @@ public struct CommitLogSidebarView: View {
                         .contextMenu { CommitActionsMenu(state: state, commit: commit) }
                 }
                 .listStyle(.sidebar)
+                .scrollContentBackground(.hidden)
                 .id(state.historyRef ?? "HEAD")
             }
         }
@@ -166,7 +167,7 @@ public struct CommitLogSidebarView: View {
                 } label: {
                     Image(systemName: "xmark.circle.fill").font(.system(size: 11)).foregroundStyle(.secondary)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.hoverPlain)
                 .help("Back to \(state.currentBranch)")
             }
         }

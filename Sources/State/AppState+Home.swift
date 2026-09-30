@@ -4,6 +4,7 @@ import AppKit
 public enum HomeTab: String, CaseIterable, Identifiable, Sendable {
     case repositories = "Repositories"
     case pullRequests = "My pull requests"
+    case conversations = "AI conversations"
     public var id: String { rawValue }
 }
 

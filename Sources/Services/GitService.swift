@@ -409,13 +409,21 @@ public actor GitService {
         try await run(["reset", "HEAD"], in: path)
     }
 
-    public func commit(at path: String, summary: String, description: String = "") async throws {
+    public func commit(at path: String, summary: String, description: String = "", skipHooks: Bool = false) async throws {
         var message = summary.trimmingCharacters(in: .whitespacesAndNewlines)
         let desc = description.trimmingCharacters(in: .whitespacesAndNewlines)
         if !desc.isEmpty {
             message += "\n\n" + desc
         }
-        try await run(["commit", "-m", message], in: path)
+        let res = try await execute(arguments: ["commit", "-m", message] + (skipHooks ? ["--no-verify"] : []), in: path)
+        guard res.isSuccess else {
+            // A rejecting hook's findings are usually on stdout, git's own message on stderr.
+            let text = [res.stdout, res.stderr].map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }.joined(separator: "\n\n")
+            throw NSError(domain: "GitService", code: Int(res.exitCode), userInfo: [
+                NSLocalizedDescriptionKey: text.isEmpty ? "git commit failed (exit \(res.exitCode))" : text
+            ])
+        }
     }
 
     /// Applies a patch to the index (`cached`) or the working tree. Throws with git's stderr when it doesn't apply.
@@ -599,12 +607,15 @@ public actor GitService {
         try await run(["checkout", branch], in: path)
     }
 
-    public func createBranch(at path: String, name: String, checkout: Bool = true) async throws {
-        if checkout {
-            try await run(["checkout", "-b", name], in: path)
-        } else {
-            try await run(["branch", name], in: path)
+    /// `base` is the start point (a local or remote branch); nil starts from HEAD. A remote base is not tracked,
+    /// so the new branch pushes to its own name rather than to the base.
+    public func createBranch(at path: String, name: String, base: String? = nil, baseIsRemote: Bool = false, checkout: Bool = true) async throws {
+        var args = checkout ? ["checkout", "-b", name] : ["branch", name]
+        if let base, !base.isEmpty {
+            if baseIsRemote { args.append("--no-track") }
+            args.append(base)
         }
+        try await run(args, in: path)
     }
 
     // MARK: - Remote Synchronization
@@ -649,11 +660,12 @@ public actor GitService {
         }
     }
 
-    public func stashPush(at path: String, message: String, includeUntracked: Bool, keepIndex: Bool) async throws {
+    public func stashPush(at path: String, message: String, includeUntracked: Bool, keepIndex: Bool, paths: [String] = []) async throws {
         var args = ["stash", "push"]
         if includeUntracked { args.append("--include-untracked") }
         if keepIndex { args.append("--keep-index") }
         if !message.isEmpty { args += ["-m", message] }
+        if !paths.isEmpty { args += ["--"] + paths }
         try await run(args, in: path)
     }
 

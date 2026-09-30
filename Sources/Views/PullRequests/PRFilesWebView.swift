@@ -83,7 +83,21 @@ struct PRFilesWebView: NSViewRepresentable {
     @MainActor
     final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         var parent: PRFilesWebView
-        weak var webView: WKWebView?
+        weak var webView: WKWebView? {
+            didSet {
+                guard chromeRevealObserver == nil, let webView else { return }
+                chromeRevealObserver = NotificationCenter.default.addObserver(forName: .gitxxShowPRChrome, object: nil, queue: .main) { [weak webView] _ in
+                    MainActor.assumeIsolated {
+                        _ = webView?.evaluateJavaScript("window.gitxxShowChrome && window.gitxxShowChrome()", completionHandler: nil)
+                    }
+                }
+            }
+        }
+        nonisolated(unsafe) private var chromeRevealObserver: NSObjectProtocol?
+
+        deinit {
+            if let chromeRevealObserver { NotificationCenter.default.removeObserver(chromeRevealObserver) }
+        }
         var lastRenderKey = 0
         var appliedInset: CGFloat = -1
         /// The file the page reports as current; selections equal to it came from scrolling, not from the list.
@@ -164,7 +178,8 @@ struct PRFilesWebView: NSViewRepresentable {
                 let point = webView.convert(event.locationInWindow, from: nil)
                 guard webView.bounds.contains(point),
                       let hit = window.contentView?.hitTest(event.locationInWindow),
-                      !hit.isDescendant(of: webView) else { return event }
+                      !hit.isDescendant(of: webView),
+                      WebScrollForwarding.shouldForward(hit: hit) else { return event }
                 webView.scrollWheel(with: event)
                 return nil
             }
@@ -262,5 +277,22 @@ struct PRFilesWebView: NSViewRepresentable {
                   let s = String(data: data, encoding: .utf8) else { return "null" }
             return "\(s)[0]"
         }
+    }
+}
+
+/// Rules for redirecting wheel events from the native chrome to the page web view underneath.
+@MainActor
+enum WebScrollForwarding {
+    /// Set while a floating overlay (command palette) is open; its own list must receive the wheel.
+    static var suspended = false
+
+    static func shouldForward(hit: NSView) -> Bool {
+        guard !suspended else { return false }
+        var view: NSView? = hit
+        while let current = view {
+            if current is NSScrollView { return false }
+            view = current.superview
+        }
+        return true
     }
 }

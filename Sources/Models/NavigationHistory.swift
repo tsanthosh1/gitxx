@@ -7,6 +7,7 @@ public struct NavigationLocation: Equatable, Hashable, Identifiable {
         case history(commitSha: String?)
         case pullRequestsIndex(filter: PRFilter)
         case pullRequestDetail(prNumber: Int, subTab: PRDetailTab)
+        case actions(runId: Int?)
         case terminal
         case home
     }
@@ -46,6 +47,8 @@ public struct NavigationLocation: Equatable, Hashable, Identifiable {
             return "arrow.triangle.pull"
         case .pullRequestDetail:
             return "arrow.triangle.pull"
+        case .actions:
+            return "play.circle"
         case .terminal:
             return "terminal.fill"
         case .home:
@@ -77,6 +80,8 @@ public struct NavigationLocation: Equatable, Hashable, Identifiable {
             return "\(repo) · \(filter.rawValue)"
         case .pullRequestDetail(let prNumber, let subTab):
             return "\(repo) · PR #\(prNumber) · \(subTab.rawValue)"
+        case .actions(let runId):
+            return runId.map { "\(repo) · Actions run \($0)" } ?? "\(repo) · Actions"
         case .terminal:
             return "\(repo) · Terminal"
         case .home:

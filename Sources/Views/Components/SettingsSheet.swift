@@ -2,37 +2,75 @@ import SwiftUI
 import AppKit
 
 public enum PreferenceCategory: String, CaseIterable, Identifiable {
+    case general = "General"
     case appearance = "Appearance & Themes"
-    case gitUsers = "Git Users & Profiles"
-    case aiCopilot = "AI & Copilot"
-    case terminal = "Terminal & Shell"
     case shortcuts = "Shortcuts & Keybindings"
-    case cli = "Command Line Tool (CLI)"
+    case gitUsers = "Git Users & Profiles"
     case github = "GitHub Accounts & API"
-    case gitEngine = "Git Engine"
+    case network = "API Usage & Network"
+    case aiCopilot = "AI & Copilot"
+    case aiWriting = "AI Commits & Assistant"
+    case terminal = "Terminal & Shell"
+    case cli = "Command Line Tool (CLI)"
     case about = "About GitXX"
 
     public var id: String { rawValue }
 
+    /// One-line sidebar label; `rawValue` stays the full name used to open a category.
+    public var shortTitle: String {
+        switch self {
+        case .general: return "General"
+        case .appearance: return "Appearance"
+        case .shortcuts: return "Shortcuts"
+        case .gitUsers: return "Git Profiles"
+        case .github: return "GitHub Account"
+        case .network: return "API Usage"
+        case .aiCopilot: return "AI Provider"
+        case .aiWriting: return "Commits & Assistant"
+        case .terminal: return "Terminal"
+        case .cli: return "Command Line Tool"
+        case .about: return "About GitXX"
+        }
+    }
+
+    /// Sidebar group heading.
+    public var group: String {
+        switch self {
+        case .general, .appearance, .shortcuts: return "App"
+        case .gitUsers, .github, .network: return "Git & GitHub"
+        case .aiCopilot, .aiWriting: return "AI"
+        case .terminal, .cli: return "Tools"
+        case .about: return ""
+        }
+    }
+
     public var iconName: String {
         switch self {
+        case .general: return "gearshape"
         case .appearance: return "paintpalette.fill"
-        case .gitUsers: return "person.crop.circle.badge.checkmark"
-        case .aiCopilot: return "sparkles"
-        case .terminal: return "terminal.fill"
         case .shortcuts: return "command"
-        case .cli: return "apple.terminal"
+        case .gitUsers: return "person.crop.circle.badge.checkmark"
         case .github: return "key.horizontal.fill"
-        case .gitEngine: return "cpu.fill"
+        case .network: return "chart.bar.xaxis"
+        case .aiCopilot: return "sparkles"
+        case .aiWriting: return "text.bubble"
+        case .terminal: return "terminal.fill"
+        case .cli: return "apple.terminal"
         case .about: return "info.circle.fill"
         }
     }
 }
 
 public struct SettingsSheet: View {
+    @AppStorage(MenuBarController.enabledKey) private var menuBarIcon = false
+    @AppStorage(KeyboardNavigation.fullAccessKey) private var fullKeyboardNavigation = true
+    @State private var fullKeyboardNavigationAtLaunch = KeyboardNavigation.fullAccessEnabled
+    @AppStorage(SurfaceStyle.intensityKey) private var surfaceIntensity = SurfaceStyle.Intensity.subtle.rawValue
+    @AppStorage(SurfaceStyle.secondaryKey) private var surfaceSecondaryHex = ""
+    @AppStorage(SurfaceStyle.tertiaryKey) private var surfaceTertiaryHex = ""
     @ObservedObject var state: AppState
     @Environment(\.dismiss) private var dismiss
-    @State private var selectedCategory: PreferenceCategory = .appearance
+    @State private var selectedCategory: PreferenceCategory = .general
     @State private var hoveredCategory: PreferenceCategory? = nil
     @State private var tokenInput: String = ""
     @State private var showPATSection: Bool = false
@@ -83,7 +121,7 @@ public struct SettingsSheet: View {
             }
             .padding(.horizontal, 18)
             .padding(.vertical, 12)
-            .background(.ultraThinMaterial)
+            .themedSurface(state.accentTheme, .header)
 
             Divider()
 
@@ -92,6 +130,19 @@ public struct SettingsSheet: View {
                 // Left Navigation Sidebar
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(PreferenceCategory.allCases) { category in
+                        if category.group != (PreferenceCategory.allCases.firstIndex(of: category).flatMap { $0 > 0 ? PreferenceCategory.allCases[$0 - 1].group : nil } ?? "-") {
+                            if category.group.isEmpty {
+                                Divider().padding(.vertical, 6)
+                            } else {
+                                Text(category.group.uppercased())
+                                    .font(.system(size: 10, weight: .bold))
+                                    .tracking(0.5)
+                                    .foregroundStyle(.tertiary)
+                                    .padding(.horizontal, 12)
+                                    .padding(.top, category == PreferenceCategory.allCases.first ? 0 : 10)
+                                    .padding(.bottom, 2)
+                            }
+                        }
                         let isSelected = selectedCategory == category
                         let isHovered = hoveredCategory == category
                         Button {
@@ -103,14 +154,15 @@ public struct SettingsSheet: View {
                                     .frame(width: 18)
                                     .foregroundStyle(isSelected ? Color.white : (isHovered ? Color.primary : Color.secondary))
 
-                                Text(category.rawValue)
+                                Text(category.shortTitle)
                                     .font(.system(size: 13, weight: isSelected ? .semibold : .medium))
+                                    .lineLimit(1)
                                     .foregroundStyle(isSelected ? Color.white : (isHovered ? Color.primary : Color.secondary))
 
                                 Spacer()
                             }
                             .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
+                            .padding(.vertical, 6)
                             .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
                             .background(
                                 Group {
@@ -145,7 +197,7 @@ public struct SettingsSheet: View {
                             )
                             .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.hoverPlain)
                         .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
                         .onHover { hovering in
                             withAnimation(.easeInOut(duration: 0.1)) {
@@ -157,7 +209,7 @@ public struct SettingsSheet: View {
                     Spacer()
                 }
                 .padding(12)
-                .frame(width: 210)
+                .frame(width: 230)
                 .frame(maxHeight: .infinity)
                 .background(Color(NSColor.windowBackgroundColor).opacity(0.6))
 
@@ -168,6 +220,12 @@ public struct SettingsSheet: View {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 20) {
                             switch selectedCategory {
+                            case .general:
+                                generalSettingsView
+                            case .network:
+                                networkSettingsView
+                            case .aiWriting:
+                                aiWritingSettingsView
                             case .appearance:
                                 appearanceSettingsView
                             case .gitUsers:
@@ -182,8 +240,6 @@ public struct SettingsSheet: View {
                                 cliSettingsView
                             case .github:
                                 githubSettingsView
-                            case .gitEngine:
-                                gitEngineSettingsView
                             case .about:
                                 aboutSettingsView
                             }
@@ -194,6 +250,7 @@ public struct SettingsSheet: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Color(NSColor.controlBackgroundColor).opacity(0.3))
                     .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("ScrollAIToBottom"))) { _ in
+                        selectedCategory = .aiWriting
                         withAnimation(.easeOut(duration: 0.2)) {
                             scrollProxy.scrollTo("commitStyleSection", anchor: .bottom)
                         }
@@ -252,7 +309,8 @@ public struct SettingsSheet: View {
                             HStack(spacing: 10) {
                                 // Gradient Preview Pill
                                 RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                    .fill(theme.linearGradient)
+                                    .fill(LinearGradient(colors: [theme.primaryColor, theme.secondaryColor, theme.tertiaryColor],
+                                                         startPoint: .topLeading, endPoint: .bottomTrailing))
                                     .frame(width: 32, height: 20)
                                     .overlay(
                                         RoundedRectangle(cornerRadius: 6, style: .continuous)
@@ -285,7 +343,7 @@ public struct SettingsSheet: View {
                                     .strokeBorder(isSelected ? theme.primaryColor : Color.primary.opacity(0.08), lineWidth: isSelected ? 1.5 : 1)
                             )
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.hoverPlain)
                     }
                 }
             }
@@ -305,12 +363,13 @@ public struct SettingsSheet: View {
                             }
                         } label: {
                             HStack(spacing: 8) {
-                                Circle()
-                                    .fill(theme.primaryColor)
-                                    .frame(width: 16, height: 16)
-                                    .overlay(
-                                        Circle().strokeBorder(Color.white.opacity(0.3), lineWidth: 1)
-                                    )
+                                ZStack {
+                                    Circle().fill(theme.tertiaryColor).frame(width: 11, height: 11).offset(x: 9)
+                                    Circle().fill(theme.secondaryColor).frame(width: 11, height: 11).offset(x: 4.5)
+                                    Circle().fill(theme.primaryColor).frame(width: 16, height: 16)
+                                        .overlay(Circle().strokeBorder(Color.white.opacity(0.3), lineWidth: 1))
+                                }
+                                .frame(width: 26, alignment: .leading)
 
                                 Text(theme.shortName)
                                     .font(.system(size: 12, weight: isSelected ? .bold : .medium))
@@ -333,10 +392,12 @@ public struct SettingsSheet: View {
                                     .strokeBorder(isSelected ? theme.primaryColor : Color.primary.opacity(0.08), lineWidth: isSelected ? 1.5 : 1)
                             )
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.hoverPlain)
                     }
                 }
             }
+
+            surfaceShadingSection
 
             // Section C: Live Interactive Component Preview
             VStack(alignment: .leading, spacing: 10) {
@@ -359,7 +420,7 @@ public struct SettingsSheet: View {
                         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                         .shadow(color: state.accentTheme.primaryColor.opacity(0.3), radius: 4, y: 2)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.hoverPlain)
 
                     // Preview Badge
                     HStack(spacing: 4) {
@@ -495,7 +556,7 @@ public struct SettingsSheet: View {
                 Button("Cancel") {
                     cancelProfileEditing()
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.hoverPlain)
                 .foregroundStyle(.secondary)
 
                 Button("Save Profile") {
@@ -589,7 +650,7 @@ public struct SettingsSheet: View {
 
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 8) {
-                        Text("AI Commit Generator & Copilot")
+                        Text("AI Provider")
                             .font(.system(size: 16, weight: .bold))
 
                         if state.aiProvider == .githubCopilot {
@@ -619,7 +680,7 @@ public struct SettingsSheet: View {
                         }
                     }
 
-                    Text("Generate intelligent Conventional Commits using your Copilot subscription, GitHub Models, or local AI")
+                    Text("Which AI powers commit messages, PR descriptions and the assistant: your Copilot subscription, GitHub Models, or a local model")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                 }
@@ -706,7 +767,7 @@ public struct SettingsSheet: View {
                             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                             .shadow(color: Color.clear, radius: 0)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.hoverPlain)
                     }
                 }
             }
@@ -761,7 +822,7 @@ public struct SettingsSheet: View {
                                         .clipShape(RoundedRectangle(cornerRadius: 5))
                                         .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Color.red.opacity(0.2), lineWidth: 1))
                                 }
-                                .buttonStyle(.plain)
+                                .buttonStyle(.hoverPlain)
                             }
                             .padding(12)
                             .background(Color.green.opacity(0.06))
@@ -938,6 +999,67 @@ public struct SettingsSheet: View {
                 }
             }
 
+            // 5. Verification & Test Section
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Verification & Test")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary)
+
+                HStack(spacing: 12) {
+                    Button {
+                        runAITest()
+                    } label: {
+                        HStack(spacing: 6) {
+                            if isTestingAI {
+                                ProgressView()
+                                    .scaleEffect(0.65)
+                                Text("Generating...")
+                                    .fontWeight(.medium)
+                            } else {
+                                Image(systemName: "sparkles")
+                                    .font(.system(size: 12))
+                                Text("Test AI Generation")
+                                    .fontWeight(.medium)
+                            }
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(isTestingAI || (state.aiProvider == .githubCopilot && !state.isCopilotConnected))
+
+                    if !testAIResult.isEmpty {
+                        HStack(spacing: 6) {
+                            Text(testAIResult)
+                                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                                .foregroundStyle(testAIResult.hasPrefix("✓") ? Color.green : Color.red)
+                                .lineLimit(1)
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(testAIResult.hasPrefix("✓") ? Color.green.opacity(0.08) : Color.red.opacity(0.08))
+                        .clipShape(RoundedRectangle(cornerRadius: 5))
+                    }
+
+                    Spacer()
+                }
+                .padding(14)
+                .background(Color(NSColor.controlBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.white.opacity(0.06), lineWidth: 1))
+            }
+        }
+    }
+
+    // MARK: - AI Commits & Assistant
+
+    private var aiWritingSettingsView: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            headerSection(
+                title: "Commits & Assistant",
+                subtitle: "How AI writes your commit messages, and standing instructions for the ⌘I assistant"
+            )
+
             // 4. Commit Message Style & Live Interactive Preview
             VStack(alignment: .leading, spacing: 10) {
                 Text("Commit Message Style")
@@ -1038,55 +1160,6 @@ public struct SettingsSheet: View {
                 .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.white.opacity(0.06), lineWidth: 1))
             }
 
-            // 5. Verification & Test Section
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Verification & Test")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.secondary)
-
-                HStack(spacing: 12) {
-                    Button {
-                        runAITest()
-                    } label: {
-                        HStack(spacing: 6) {
-                            if isTestingAI {
-                                ProgressView()
-                                    .scaleEffect(0.65)
-                                Text("Generating...")
-                                    .fontWeight(.medium)
-                            } else {
-                                Image(systemName: "sparkles")
-                                    .font(.system(size: 12))
-                                Text("Test AI Generation")
-                                    .fontWeight(.medium)
-                            }
-                        }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(isTestingAI || (state.aiProvider == .githubCopilot && !state.isCopilotConnected))
-
-                    if !testAIResult.isEmpty {
-                        HStack(spacing: 6) {
-                            Text(testAIResult)
-                                .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                                .foregroundStyle(testAIResult.hasPrefix("✓") ? Color.green : Color.red)
-                                .lineLimit(1)
-                        }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 4)
-                        .background(testAIResult.hasPrefix("✓") ? Color.green.opacity(0.08) : Color.red.opacity(0.08))
-                        .clipShape(RoundedRectangle(cornerRadius: 5))
-                    }
-
-                    Spacer()
-                }
-                .padding(14)
-                .background(Color(NSColor.controlBackgroundColor))
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.white.opacity(0.06), lineWidth: 1))
-            }
         }
     }
 
@@ -1253,8 +1326,8 @@ public struct SettingsSheet: View {
     private var githubSettingsView: some View {
         VStack(alignment: .leading, spacing: 20) {
             headerSection(
-                title: "GitHub Authentication & Quota",
-                subtitle: "Connect your GitHub account via OAuth browser flow, GitHub CLI, or a Personal Access Token"
+                title: "GitHub Account",
+                subtitle: "Sign in with the browser flow, the GitHub CLI, or a Personal Access Token"
             )
 
             if state.hasConfiguredGitHubToken {
@@ -1262,6 +1335,17 @@ public struct SettingsSheet: View {
             } else {
                 notConnectedCard
             }
+        }
+    }
+
+    // MARK: - API Usage & Network
+
+    private var networkSettingsView: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            headerSection(
+                title: "API Usage & Network",
+                subtitle: "GitHub rate limit, cached (304) responses and every request GitXX has made this session"
+            )
 
             // Rate Limit & Quota Consumption Dashboard
             VStack(alignment: .leading, spacing: 14) {
@@ -1339,7 +1423,7 @@ public struct SettingsSheet: View {
 
                     // Tile 3: 304 Cached Saved
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("⚡️ 304 CACHED SAVED")
+                        Label("304 CACHED SAVED", systemImage: "bolt.fill")
                             .font(.system(size: 9.5, weight: .semibold))
                             .foregroundStyle(.secondary)
                         HStack(alignment: .firstTextBaseline, spacing: 4) {
@@ -1432,7 +1516,7 @@ public struct SettingsSheet: View {
                                     .font(.system(size: 11))
                             }
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.hoverPlain)
                         .foregroundStyle(.red)
                         .font(.system(size: 11))
                         .disabled(state.apiRequestLogs.isEmpty)
@@ -1444,7 +1528,7 @@ public struct SettingsSheet: View {
                     // Filter segments
                     HStack(spacing: 4) {
                         apiFilterButton(title: "All", count: state.apiRequestLogs.count, tag: "all")
-                        apiFilterButton(title: "⚡️ Cached 304", count: state.apiLogStats.cached304Count, tag: "cached")
+                        apiFilterButton(title: "Cached 304", count: state.apiLogStats.cached304Count, tag: "cached")
                         apiFilterButton(title: "GET", count: state.apiRequestLogs.filter { $0.method == "GET" && !$0.isCached304 }.count, tag: "get")
                         apiFilterButton(title: "Writes", count: state.apiRequestLogs.filter { $0.method == "POST" || $0.method == "PATCH" }.count, tag: "write")
                         apiFilterButton(title: "Errors", count: state.apiRequestLogs.filter { $0.statusCode >= 400 || $0.statusCode == 0 }.count, tag: "error")
@@ -1469,7 +1553,7 @@ public struct SettingsSheet: View {
                                     .font(.system(size: 10))
                                     .foregroundStyle(.secondary)
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(.hoverPlain)
                         }
                     }
                     .padding(.horizontal, 8)
@@ -1809,7 +1893,7 @@ public struct SettingsSheet: View {
                                 .font(.caption2)
                                 .foregroundStyle(state.accentTheme.primaryColor)
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(.hoverPlain)
                         }
                     },
                     label: {
@@ -1887,7 +1971,7 @@ public struct SettingsSheet: View {
             .foregroundStyle(isSelected ? Color.white : Color.secondary)
             .clipShape(RoundedRectangle(cornerRadius: 6))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.hoverPlain)
     }
 
     @ViewBuilder
@@ -1985,7 +2069,7 @@ public struct SettingsSheet: View {
                 .padding(.vertical, 7)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.hoverPlain)
 
             // Expanded Details View
             if isExpanded {
@@ -2073,42 +2157,6 @@ public struct SettingsSheet: View {
     // MARK: - 4. Git Engine
 
 
-    private var gitEngineSettingsView: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            headerSection(
-                title: "Git Engine Architecture",
-                subtitle: "High-performance local git execution engine specifications"
-            )
-
-            VStack(alignment: .leading, spacing: 10) {
-                bulletFeature(
-                    icon: "bolt.fill",
-                    title: "100% Local Asynchronous Process Runner",
-                    desc: "All diffs, staging, branch switches, and commits run via low-overhead macOS Process calls with zero network latency."
-                )
-
-                Divider().padding(.vertical, 2)
-
-                bulletFeature(
-                    icon: "shippingbox.fill",
-                    title: "GraphQL v4 Batching",
-                    desc: "PR lists, commit trees, and review threads are fetched in a single consolidated GraphQL batch (cost: only 1 rate point)."
-                )
-
-                Divider().padding(.vertical, 2)
-
-                bulletFeature(
-                    icon: "lock.shield.fill",
-                    title: "Hardware Keychain Encryption",
-                    desc: "Access credentials and personal tokens never touch plain disk; they are stored using Apple's Security framework."
-                )
-            }
-            .padding(16)
-            .background(Color(NSColor.controlBackgroundColor))
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        }
-    }
-
     // MARK: - 5. About GitXX
 
     private var aboutSettingsView: some View {
@@ -2140,6 +2188,34 @@ public struct SettingsSheet: View {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 400)
+
+            VStack(alignment: .leading, spacing: 10) {
+                bulletFeature(
+                    icon: "bolt.fill",
+                    title: "100% Local Asynchronous Process Runner",
+                    desc: "All diffs, staging, branch switches, and commits run via low-overhead macOS Process calls with zero network latency."
+                )
+
+                Divider().padding(.vertical, 2)
+
+                bulletFeature(
+                    icon: "shippingbox.fill",
+                    title: "GraphQL v4 Batching",
+                    desc: "PR lists, commit trees, and review threads are fetched in a single consolidated GraphQL batch (cost: only 1 rate point)."
+                )
+
+                Divider().padding(.vertical, 2)
+
+                bulletFeature(
+                    icon: "lock.shield.fill",
+                    title: "Hardware Keychain Encryption",
+                    desc: "Access credentials and personal tokens never touch plain disk; they are stored using Apple's Security framework."
+                )
+            }
+            .padding(16)
+            .background(Color(NSColor.controlBackgroundColor))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .frame(maxWidth: 520)
 
             HStack(spacing: 12) {
                 badgePill(label: "Apple Silicon Native")
@@ -2254,7 +2330,7 @@ public struct SettingsSheet: View {
                     .clipShape(RoundedRectangle(cornerRadius: 6))
                     .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.white.opacity(0.12), lineWidth: 1))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.hoverPlain)
                 .disabled(state.isRefreshingQuota)
             }
 
@@ -2422,7 +2498,7 @@ public struct SettingsSheet: View {
                     }
                     .foregroundStyle(.secondary)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.hoverPlain)
             }
         }
         .padding(12)
@@ -2572,6 +2648,7 @@ private struct ProfileRowCardView: View {
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
+            .iconHover(size: 24)
             .help("Profile options")
         }
         .frame(maxWidth: .infinity)
@@ -2661,7 +2738,7 @@ extension SettingsSheet {
                             .foregroundStyle(.secondary)
                             .font(.system(size: 12))
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.hoverPlain)
                 }
             }
             .padding(.horizontal, 10)
@@ -2799,7 +2876,7 @@ extension SettingsSheet {
                             Button("Reset") {
                                 state.resetShortcut(id: item.id)
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(.hoverPlain)
                             .font(.system(size: 10.5, weight: .medium))
                             .foregroundStyle(state.accentTheme.primaryColor)
                         }
@@ -2816,7 +2893,7 @@ extension SettingsSheet {
                                 .background(Color.white.opacity(0.06))
                                 .clipShape(Circle())
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.hoverPlain)
                         .help("Edit shortcut")
                     }
                 }
@@ -2852,7 +2929,7 @@ extension SettingsSheet {
                         .stroke(isSelected ? Color.white.opacity(0.4) : Color.white.opacity(0.12), lineWidth: 1)
                 )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.hoverPlain)
     }
 
     @ViewBuilder
@@ -3011,7 +3088,7 @@ extension SettingsSheet {
                     Image(systemName: "doc.on.doc")
                         .font(.system(size: 11))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.hoverPlain)
                 .help("Copy command")
             }
             .padding(.horizontal, 10)
@@ -3035,3 +3112,176 @@ extension SettingsSheet {
 
 
 
+
+extension SettingsSheet {
+    // MARK: - General
+
+    private var generalSettingsView: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            headerSection(title: "General", subtitle: "Menu bar, keyboard and command line")
+
+            settingsGroup("Menu bar") {
+                menuBarIconSection
+            }
+
+            settingsGroup("Keyboard") {
+                settingsRow(icon: "arrow.right.to.line", title: "Tab moves between all controls",
+                            detail: "Tab and ⇧Tab reach every button, checkbox and chip (not just text fields), and Space or Return presses the focused one. Takes effect when GitXX relaunches.") {
+                    Toggle("", isOn: $fullKeyboardNavigation).toggleStyle(.switch).labelsHidden()
+                }
+                if fullKeyboardNavigation != fullKeyboardNavigationAtLaunch {
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.clockwise.circle.fill").foregroundStyle(.orange)
+                        Text("Relaunch GitXX to apply.").font(.system(size: 11)).foregroundStyle(.secondary)
+                    }
+                    .padding(.leading, 34)
+                }
+                Divider()
+                settingsRow(icon: "command", title: "⌘↩ runs the primary action",
+                            detail: "In any dialog, ⌘↩ presses its main button (Create, Merge, Submit…), even while you're typing in a multi-line field.") {
+                    EmptyView()
+                }
+                Divider()
+                settingsRow(icon: "keyboard", title: "Shortcuts", detail: "Customize or reset every keyboard shortcut, and adapt them to Dvorak or other layouts.") {
+                    Button("Open Shortcuts") { selectedCategory = .shortcuts }
+                        .buttonStyle(PRActionButtonStyle(.secondary, size: .compact))
+                }
+            }
+
+            settingsGroup("Command line") {
+                settingsRow(icon: "apple.terminal", title: "gitxx command",
+                            detail: "Open GitXX on any repository from your terminal with `gitxx .`") {
+                    Button("Set Up") { selectedCategory = .cli }
+                        .buttonStyle(PRActionButtonStyle(.secondary, size: .compact))
+                }
+            }
+        }
+    }
+
+    private func settingsGroup<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 10) {
+                content()
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(NSColor.controlBackgroundColor))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.white.opacity(0.06), lineWidth: 1))
+        }
+    }
+
+    private func settingsRow<Trailing: View>(icon: String, title: String, detail: String,
+                                             @ViewBuilder trailing: () -> Trailing) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 14))
+                .foregroundStyle(state.accentTheme.primaryColor)
+                .frame(width: 22)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.system(size: 12.5, weight: .semibold))
+                Text(.init(detail))
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            trailing()
+        }
+    }
+
+    var menuBarIconSection: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Image(nsImage: NSApp.applicationIconImage)
+                .resizable()
+                .frame(width: 28, height: 28)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Show GitXX in the menu bar")
+                    .font(.system(size: 12.5, weight: .semibold))
+                Text("Adds the app icon to the macOS menu bar with recent repositories, New Branch, Fetch/Pull/Push, the AI assistant and Settings.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            Toggle("", isOn: $menuBarIcon)
+                .toggleStyle(.switch)
+                .labelsHidden()
+        }
+    }
+
+    var surfaceShadingSection: some View {
+        let theme = state.accentTheme
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Surface Shading")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Picker("", selection: $surfaceIntensity) {
+                    ForEach(SurfaceStyle.Intensity.allCases) { Text($0.title).tag($0.rawValue) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 210)
+            }
+            Text("The whole window shares one dark shade (no frosted glass): a soft wash of the secondary colour from the top-left and the tertiary from the bottom-right, running continuously across the toolbar, sidebars and content, like Slack's dark theme.")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 18) {
+                surfaceColorSlot("Secondary", hex: $surfaceSecondaryHex, fallback: theme.secondaryColor)
+                surfaceColorSlot("Tertiary", hex: $surfaceTertiaryHex, fallback: theme.tertiaryColor)
+                Spacer()
+                Button("Use theme colours") {
+                    surfaceSecondaryHex = ""
+                    surfaceTertiaryHex = ""
+                }
+                .buttonStyle(PRActionButtonStyle(.subtle, size: .compact))
+                .disabled(surfaceSecondaryHex.isEmpty && surfaceTertiaryHex.isEmpty)
+            }
+            VStack(spacing: 0) {
+                Color.white.opacity(SurfaceStyle.lift(.toolbar)).frame(height: 24)
+                Rectangle().fill(Color.primary.opacity(0.08)).frame(height: 1)
+                HStack(spacing: 0) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        ForEach(0..<4, id: \.self) { i in
+                            RoundedRectangle(cornerRadius: 3)
+                                .fill(i == 1 ? theme.primaryColor.opacity(0.9) : Color.primary.opacity(0.12))
+                                .frame(width: i == 1 ? 70 : 80, height: 7)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .padding(10)
+                    .frame(width: 120, alignment: .leading)
+                    Rectangle().fill(Color.primary.opacity(0.08)).frame(width: 1)
+                    Color.clear
+                }
+            }
+            .background(ThemedWindowWash(theme: theme))
+            .frame(height: 96)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.primary.opacity(0.1)))
+        }
+    }
+
+    private func surfaceColorSlot(_ title: String, hex: Binding<String>, fallback: Color) -> some View {
+        let binding = Binding<Color>(
+            get: { SurfaceStyle.color(hex: hex.wrappedValue) ?? fallback },
+            set: { hex.wrappedValue = SurfaceStyle.hex(of: $0) }
+        )
+        return HStack(spacing: 6) {
+            ColorPicker("", selection: binding, supportsOpacity: false)
+                .labelsHidden()
+            VStack(alignment: .leading, spacing: 0) {
+                Text(title).font(.system(size: 11.5, weight: .semibold))
+                Text(hex.wrappedValue.isEmpty ? "Theme default" : "#\(hex.wrappedValue)")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}

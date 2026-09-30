@@ -3,6 +3,7 @@ import AppKit
 
 public struct CommitDetailView: View {
     @ObservedObject var state: AppState
+    @State private var showFullMessage = false
 
     public var body: some View {
         VStack(spacing: 0) {
@@ -14,11 +15,12 @@ public struct CommitDetailView: View {
                             Text(commit.summary)
                                 .font(.system(size: 15, weight: .bold))
                                 .foregroundStyle(.primary)
+                                .lineLimit(showFullMessage ? nil : 2)
+                                .textSelection(.enabled)
+                                .help(commit.summary)
 
                             if !commit.body.isEmpty {
-                                Text(commit.body)
-                                    .font(.system(size: 12))
-                                    .foregroundStyle(.secondary)
+                                CommitMessageBody(text: commit.body, expanded: $showFullMessage)
                                     .padding(.top, 2)
                             }
                         }
@@ -52,6 +54,7 @@ public struct CommitDetailView: View {
                         .menuStyle(.borderlessButton)
                         .menuIndicator(.hidden)
                         .fixedSize()
+                        .iconHover(size: 24)
                         .help("More commit actions")
 
                         // Copy SHA Button
@@ -100,7 +103,8 @@ public struct CommitDetailView: View {
                     }
                 }
                 .padding(14)
-                .background(.ultraThinMaterial)
+                .themedSurface(state.accentTheme, .header)
+                .onChange(of: commit.sha) { _, _ in showFullMessage = false }
 
                 Divider()
 
@@ -120,5 +124,50 @@ public struct CommitDetailView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+    }
+}
+
+/// Commit body capped to a few lines so the diff below keeps most of the pane.
+private struct CommitMessageBody: View {
+    let text: String
+    @Binding var expanded: Bool
+
+    private static let collapsedLines = 3
+    private var lineCount: Int { text.split(separator: "\n", omittingEmptySubsequences: false).count }
+    private var isLong: Bool { lineCount > Self.collapsedLines || text.count > 280 }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if expanded {
+                ScrollView {
+                    message.frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 220)
+                .fixedSize(horizontal: false, vertical: true)
+            } else {
+                message.lineLimit(Self.collapsedLines)
+            }
+            if isLong {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) { expanded.toggle() }
+                } label: {
+                    HStack(spacing: 3) {
+                        Text(expanded ? "Show less" : "Show more")
+                        Image(systemName: expanded ? "chevron.up" : "chevron.down").font(.system(size: 8, weight: .bold))
+                    }
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Color.accentColor)
+                }
+                .buttonStyle(.hoverPlain)
+                .pointerCursor()
+            }
+        }
+    }
+
+    private var message: some View {
+        Text(text)
+            .font(.system(size: 12))
+            .foregroundStyle(.secondary)
+            .textSelection(.enabled)
     }
 }

@@ -232,7 +232,7 @@ enum PRFilesHTMLBuilder {
 html { padding-top: var(--gitxx-top-inset, 0px); }
 html::-webkit-scrollbar, body::-webkit-scrollbar { display: none; width: 0; height: 0; }
 body {
-  margin: 0; padding: 16px 20px 40vh; background: #0d1117; color: #e6edf3;
+  margin: 0; padding: 16px 20px 40vh; background: transparent; color: #e6edf3;
   font: 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 section.file { margin: 0 0 16px; }
@@ -288,7 +288,11 @@ section.is-viewed .viewed { background: rgba(56,139,253,0.12); border-color: rgb
 .viewed .box { width: 13px; height: 13px; border: 1px solid #6e7681; border-radius: 3px; display: inline-flex;
   align-items: center; justify-content: center; font-size: 10px; line-height: 1; color: #fff; }
 section.is-viewed .viewed .box { background: #2f81f7; border-color: #2f81f7; }
-section.is-viewed .viewed .box::after { content: "✓"; }
+section.is-viewed .viewed .box::after {
+  content: ""; width: 10px; height: 10px; background: currentColor;
+  -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0Z'/></svg>") center / contain no-repeat;
+}
+\#(HTMLIcon.css)
 .notice { padding: 14px 16px; color: #8b949e; font-size: 12.5px; background: #0d1117; }
 .notice a { color: #58a6ff; }
 section.large:not(.loaded) .diff { display: none; }
@@ -384,7 +388,7 @@ body.no-comments #addc { display: none !important; }
 .md ul, .md ol { margin: 4px 0; padding-left: 22px; }
 
 #backToTop {
-  position: fixed; right: 22px; bottom: 22px; z-index: 60;
+  position: fixed; right: 18px; bottom: 80px; z-index: 60;
   display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 14px;
   border-radius: 17px; border: 1px solid #3d444d; background: rgba(33,38,45,0.94); color: #e6edf3;
   font: 600 12.5px -apple-system, BlinkMacSystemFont, sans-serif; cursor: pointer;
@@ -438,6 +442,9 @@ body.no-comments #addc { display: none !important; }
   }
   window.gitxxInsetChanged = function () { setChromeHidden(chromeHidden, false); };
   window.gitxxSyncChrome = function () { lastY = window.scrollY; syncChrome(true); };
+
+  // The native "Show toolbar" button calls this while the bars are hidden.
+  window.gitxxShowChrome = function () { travel = 0; setChromeHidden(false, true); };
 
   // ---- Scroll spy: the file whose header is stuck at the top is the current file ----
   var current = sections.length ? sections[0].dataset.path : null, jumping = false, jumpTimer = null, spyQueued = false;
@@ -551,7 +558,7 @@ body.no-comments #addc { display: none !important; }
     var box = document.createElement("div");
     box.className = "thread" + (t.resolved ? " resolved" : "") + (folded ? " folded" : "");
     box.dataset.tid = t.id;
-    var state = t.resolved ? '<span class="th-state res">✓ Resolved' + (t.resolvedBy ? " by " + esc(t.resolvedBy) : "") + "</span>"
+    var state = t.resolved ? '<span class="th-state res">\#(HTMLIcon.check) Resolved' + (t.resolvedBy ? " by " + esc(t.resolvedBy) : "") + "</span>"
       : t.outdated ? '<span class="th-state out">Outdated</span>'
       : "<span>" + (t.side === "LEFT" ? "Left" : "Line") + " " + esc(t.line) + "</span>";
     var head = state + "<span>" + t.comments.length + " comment" + (t.comments.length === 1 ? "" : "s") + "</span><span class=\"spacer\"></span>";
@@ -616,7 +623,7 @@ body.no-comments #addc { display: none !important; }
       var open = list.filter(function (t) { return !t.resolved; }).length;
       var badge = s.querySelector(".fhead .threads");
       badge.hidden = open === 0;
-      badge.textContent = "💬 " + open;
+      badge.innerHTML = "\#(HTMLIcon.js(HTMLIcon.comment)) " + open;
       badge.title = open + " unresolved conversation" + (open === 1 ? "" : "s");
     });
   };
@@ -851,7 +858,7 @@ body.no-comments #addc { display: none !important; }
   var btt = document.createElement("button");
   btt.id = "backToTop";
   btt.title = "Back to top";
-  btt.innerHTML = "<span>↑</span><span>Top</span>";
+  btt.innerHTML = "<span>\#(HTMLIcon.js(HTMLIcon.arrowUp))</span><span>Top</span>";
   btt.onclick = function () { window.scrollTo({ top: 0, behavior: "smooth" }); };
   document.body.appendChild(btt);
 

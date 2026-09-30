@@ -1,8 +1,8 @@
 import Foundation
 
 /// One message in the OpenAI-style chat transcript sent to the model.
-public struct ChatWireMessage: Sendable, Hashable {
-    public enum Role: String, Sendable { case system, user, assistant, tool }
+public struct ChatWireMessage: Sendable, Hashable, Codable {
+    public enum Role: String, Sendable, Codable { case system, user, assistant, tool }
 
     public var role: Role
     public var content: String?
@@ -26,7 +26,7 @@ public struct ChatWireMessage: Sendable, Hashable {
     }
 }
 
-public struct AIToolCall: Sendable, Hashable {
+public struct AIToolCall: Sendable, Hashable, Codable {
     public let id: String
     public let name: String
     /// JSON-encoded arguments, as produced by the model.

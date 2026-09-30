@@ -143,7 +143,7 @@ struct PRAuthorPickerPopover: View {
             .clipShape(RoundedRectangle(cornerRadius: 6))
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.hoverPlain)
     }
 
     private func searchRemote() async {

@@ -242,7 +242,7 @@ public struct PRReviewModalView: View {
             )
             .contentShape(RoundedRectangle(cornerRadius: 10))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.hoverPlain)
         .disabled(disabled)
         .opacity(disabled ? 0.45 : 1)
     }

@@ -28,7 +28,7 @@ public struct ToastNotificationView: View {
                         .padding(4)
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.hoverPlain)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)

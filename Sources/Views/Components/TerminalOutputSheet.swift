@@ -62,11 +62,11 @@ public struct TerminalOutputSheet: View {
                         .font(.system(size: 12, weight: .bold))
                         .frame(width: 24, height: 24)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.hoverPlain)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
-            .background(.ultraThinMaterial)
+            .themedSurface(state.accentTheme, .header)
 
             Divider()
 

@@ -93,7 +93,8 @@ public struct PRConversationView: View {
                         openNavPanel: state.prNavPanelRequested,
                         onNavPanelOpened: {
                             state.prNavPanelRequested = false
-                        }
+                        },
+                        headCheckedOut: state.currentRepo != nil && pr.headBranch == state.currentBranch
                     )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
@@ -107,7 +108,7 @@ public struct PRConversationView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(red: 13/255, green: 17/255, blue: 23/255))
+        .themedSurface(state.accentTheme, .sidebar)
         .onAppear {
             if state.prTimeline.isEmpty && !state.isLoadingPRTimeline {
                 state.loadPRTimeline(for: pr)
@@ -394,7 +395,7 @@ private struct ReviewEventRow: View {
                         }
                         .foregroundStyle(Color(red: 125/255, green: 133/255, blue: 144/255))
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.hoverPlain)
                     .padding(.top, 4)
                 }
             }
@@ -482,7 +483,7 @@ private struct ReviewThreadView: View {
                             .frame(width: 22, height: 22)
                             .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.hoverPlain)
                     .help(isCollapsed ? "Expand thread" : "Collapse thread")
                 }
                 .padding(.horizontal, 12)
@@ -533,7 +534,7 @@ private struct ReviewThreadView: View {
                                     .padding(.horizontal, 14)
                                     .padding(.vertical, 8)
                                 }
-                                .buttonStyle(.plain)
+                                .buttonStyle(.hoverPlain)
                                 .background(Color(red: 13/255, green: 17/255, blue: 23/255))
                             }
                         }
@@ -635,7 +636,7 @@ private struct ReviewThreadView: View {
                             .font(.system(size: 11))
                             .foregroundStyle(.tertiary)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.hoverPlain)
                     .help("Open in browser")
                 }
             }
@@ -699,7 +700,7 @@ private struct CommitPushRow: View {
                             .font(.system(size: 12.5))
                             .foregroundStyle(Color(red: 201/255, green: 209/255, blue: 217/255))
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.hoverPlain)
                     }
 
                     Spacer()

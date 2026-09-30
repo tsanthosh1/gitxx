@@ -194,7 +194,7 @@ public struct PRHoverCardView: View {
                             .stroke(Color.primary.opacity(0.10), lineWidth: 1)
                     )
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.hoverPlain)
 
                 Button {
                     onOpen(.checks)
@@ -215,7 +215,7 @@ public struct PRHoverCardView: View {
                             .stroke(Color.primary.opacity(0.10), lineWidth: 1)
                     )
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.hoverPlain)
 
                 Button {
                     onOpen(.filesChanged)
@@ -235,7 +235,7 @@ public struct PRHoverCardView: View {
                             .stroke(Color.primary.opacity(0.10), lineWidth: 1)
                     )
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.hoverPlain)
             }
         }
         .padding(14)

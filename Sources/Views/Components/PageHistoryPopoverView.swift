@@ -50,7 +50,7 @@ public struct PageHistoryPopoverView: View {
                             .font(.system(size: 11, weight: .medium))
                             .foregroundStyle(.secondary)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.hoverPlain)
                     .help("Clear session page history")
                 }
             }
@@ -91,7 +91,7 @@ public struct PageHistoryPopoverView: View {
                             .font(.system(size: 12))
                             .foregroundStyle(.secondary)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.hoverPlain)
                 }
             }
             .padding(.horizontal, 10)
@@ -312,6 +312,8 @@ private struct PageHistoryRowView: View {
             return Color.purple.opacity(0.15)
         case .pullRequestsIndex, .pullRequestDetail:
             return Color.blue.opacity(0.15)
+        case .actions:
+            return Color.orange.opacity(0.15)
         case .terminal, .home:
             return Color.gray.opacity(0.15)
         }
@@ -328,6 +330,8 @@ private struct PageHistoryRowView: View {
             return .purple
         case .pullRequestsIndex, .pullRequestDetail:
             return .blue
+        case .actions:
+            return .orange
         case .terminal, .home:
             return .secondary
         }

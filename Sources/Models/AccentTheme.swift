@@ -8,6 +8,8 @@ public enum AccentTheme: String, CaseIterable, Identifiable, Codable, Sendable {
     case sunsetCoral = "Sunset Coral"
     case royalPurple = "Royal Purple"
     case amberGold = "Amber Gold"
+    case roseRed = "Rose"
+    case slateNord = "Nord"
 
     // Gradient Themes
     case gradientCyberpunk = "Cyberpunk (Neon Green ➔ Cyan)"
@@ -16,12 +18,15 @@ public enum AccentTheme: String, CaseIterable, Identifiable, Codable, Sendable {
     case gradientAurora = "Aurora Borealis (Purple ➔ Emerald)"
     case gradientElectric = "Electric Violet (Indigo ➔ Magenta)"
     case gradientSolar = "Solar Flare (Gold ➔ Crimson)"
+    case gradientAubergine = "Aubergine (Plum ➔ Raspberry)"
+    case gradientLagoon = "Lagoon (Teal ➔ Indigo)"
 
     public var id: String { rawValue }
 
     public var isGradient: Bool {
         switch self {
-        case .gradientCyberpunk, .gradientSunset, .gradientOcean, .gradientAurora, .gradientElectric, .gradientSolar:
+        case .gradientCyberpunk, .gradientSunset, .gradientOcean, .gradientAurora, .gradientElectric, .gradientSolar,
+             .gradientAubergine, .gradientLagoon:
             return true
         default:
             return false
@@ -30,72 +35,75 @@ public enum AccentTheme: String, CaseIterable, Identifiable, Codable, Sendable {
 
     public var shortName: String {
         switch self {
-        case .classicGreen: return "Green"
+        case .classicGreen: return "Emerald"
         case .electricBlue: return "Blue"
-        case .neonCyan: return "Cyan"
+        case .neonCyan: return "Teal"
         case .sunsetCoral: return "Coral"
-        case .royalPurple: return "Purple"
+        case .royalPurple: return "Violet"
         case .amberGold: return "Amber"
+        case .roseRed: return "Rose"
+        case .slateNord: return "Nord"
         case .gradientCyberpunk: return "Cyberpunk"
         case .gradientSunset: return "Sunset"
         case .gradientOcean: return "Ocean Deep"
         case .gradientAurora: return "Aurora"
         case .gradientElectric: return "Electric"
         case .gradientSolar: return "Solar Flare"
+        case .gradientAubergine: return "Aubergine"
+        case .gradientLagoon: return "Lagoon"
         }
     }
 
     public var gradientDescription: String {
         switch self {
-        case .gradientCyberpunk: return "Neon Green ➔ Cyan"
-        case .gradientSunset: return "Orange ➔ Hot Pink"
-        case .gradientOcean: return "Cyan ➔ Deep Blue"
-        case .gradientAurora: return "Purple ➔ Emerald"
-        case .gradientElectric: return "Indigo ➔ Magenta"
-        case .gradientSolar: return "Gold ➔ Crimson"
+        case .gradientCyberpunk: return "Jade ➔ Cyan"
+        case .gradientSunset: return "Tangerine ➔ Pink"
+        case .gradientOcean: return "Cyan ➔ Royal Blue"
+        case .gradientAurora: return "Violet ➔ Emerald"
+        case .gradientElectric: return "Indigo ➔ Fuchsia"
+        case .gradientSolar: return "Amber ➔ Crimson"
+        case .gradientAubergine: return "Plum ➔ Raspberry"
+        case .gradientLagoon: return "Teal ➔ Indigo"
         default: return ""
         }
     }
 
-    public var colors: [Color] {
-        switch self {
-        case .classicGreen:
-            // Native Apple system green (#30D158) - luminous, vibrant, punchy
-            return [Color.green]
-        case .electricBlue:
-            // High-luminance macOS system blue (#0A84FF)
-            return [Color(red: 0.08, green: 0.52, blue: 1.00)]
-        case .neonCyan:
-            // High-contrast modern terminal neon cyan (#00E5FF)
-            return [Color(red: 0.00, green: 0.86, blue: 0.98)]
-        case .sunsetCoral:
-            // Radiant warm fiery coral (#FF5E3A)
-            return [Color(red: 1.00, green: 0.38, blue: 0.24)]
-        case .royalPurple:
-            // Electric macOS purple (#BF5AF2)
-            return [Color(red: 0.72, green: 0.36, blue: 0.98)]
-        case .amberGold:
-            // Luminous warm amber gold (#FFB800)
-            return [Color(red: 1.00, green: 0.73, blue: 0.06)]
+    private static func hex(_ value: UInt32) -> Color {
+        Color(red: Double((value >> 16) & 0xFF) / 255, green: Double((value >> 8) & 0xFF) / 255, blue: Double(value & 0xFF) / 255)
+    }
 
-        case .gradientCyberpunk:
-            return [Color(red: 0.05, green: 0.92, blue: 0.55), Color(red: 0.00, green: 0.76, blue: 0.98)]
-        case .gradientSunset:
-            return [Color(red: 1.00, green: 0.44, blue: 0.22), Color(red: 0.95, green: 0.22, blue: 0.58)]
-        case .gradientOcean:
-            return [Color(red: 0.00, green: 0.82, blue: 0.96), Color(red: 0.22, green: 0.42, blue: 0.98)]
-        case .gradientAurora:
-            return [Color(red: 0.68, green: 0.28, blue: 0.96), Color(red: 0.12, green: 0.86, blue: 0.55)]
-        case .gradientElectric:
-            return [Color(red: 0.42, green: 0.25, blue: 0.98), Color(red: 0.94, green: 0.24, blue: 0.78)]
-        case .gradientSolar:
-            return [Color(red: 1.00, green: 0.70, blue: 0.10), Color(red: 0.95, green: 0.24, blue: 0.28)]
+    /// Primary, secondary and tertiary colours. The primary fills buttons under white text, so every primary sits in
+    /// the mid-luminance band (about 3:1 against white and 4:1+ against the dark canvas). Secondary and tertiary tint
+    /// surfaces and gradients.
+    public var palette: [Color] {
+        let h = Self.hex
+        switch self {
+        case .classicGreen: return [h(0x2DA44E), h(0x1A7F72), h(0x3B6FD8)]
+        case .electricBlue: return [h(0x3B7DF0), h(0x5B5BD6), h(0x1F8FB0)]
+        case .neonCyan: return [h(0x0E9AAE), h(0x2E6FD8), h(0x16A37A)]
+        case .sunsetCoral: return [h(0xE8583A), h(0xC2366B), h(0xD08A0A)]
+        case .royalPurple: return [h(0x8B5CF6), h(0xB83A9B), h(0x4F52E0)]
+        case .amberGold: return [h(0xD6800A), h(0xC2410C), h(0x9A7B12)]
+        case .roseRed: return [h(0xE0395E), h(0x9D2A6B), h(0xD9631E)]
+        case .slateNord: return [h(0x5E81AC), h(0x4C8C9E), h(0x7B6BA8)]
+        case .gradientCyberpunk: return [h(0x0E9F6E), h(0x0891B2), h(0x5B5FE0)]
+        case .gradientSunset: return [h(0xEE6A1A), h(0xD6336C), h(0x7C3AED)]
+        case .gradientOcean: return [h(0x0891B2), h(0x2563EB), h(0x0D9488)]
+        case .gradientAurora: return [h(0x8B5CF6), h(0x059669), h(0x0EA5E9)]
+        case .gradientElectric: return [h(0x6366F1), h(0xC026D3), h(0xDB2777)]
+        case .gradientSolar: return [h(0xDD8A0B), h(0xDC2626), h(0x9D174D)]
+        case .gradientAubergine: return [h(0x9D4EDD), h(0xD9366B), h(0x611F69)]
+        case .gradientLagoon: return [h(0x0F9D8F), h(0x4F46E5), h(0x0284C7)]
         }
     }
 
-    public var primaryColor: Color {
-        colors.first ?? Color.green
+    public var colors: [Color] {
+        isGradient ? Array(palette.prefix(2)) : [palette[0]]
     }
+
+    public var primaryColor: Color { palette[0] }
+    public var secondaryColor: Color { palette[1] }
+    public var tertiaryColor: Color { palette[2] }
 
     public var linearGradient: LinearGradient {
         if colors.count > 1 {
@@ -140,7 +148,7 @@ public enum AccentTheme: String, CaseIterable, Identifiable, Codable, Sendable {
             return .classicGreen
         case "ocean", "ocean blue", "electric blue", "blue":
             return .electricBlue
-        case "cyan", "neon cyan", "graphite", "graphite slate", "slate":
+        case "cyan", "neon cyan", "teal", "graphite", "graphite slate", "slate":
             return .neonCyan
         case "sunset", "sunset coral", "coral":
             return .sunsetCoral
@@ -148,6 +156,10 @@ public enum AccentTheme: String, CaseIterable, Identifiable, Codable, Sendable {
             return .royalPurple
         case "amber", "amber gold", "gold":
             return .amberGold
+        case "rose", "red":
+            return .roseRed
+        case "nord":
+            return .slateNord
         default:
             return nil
         }

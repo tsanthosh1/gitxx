@@ -14,7 +14,7 @@ struct PRConversationSidebar: View {
     }
 
     private var readiness: PRMergeReadiness {
-        PRMergeReadiness.evaluate(pr: pr, checks: state.prChecks, timeline: state.prTimeline)
+        PRMergeReadiness.evaluate(pr: pr, checks: state.prChecks, timeline: state.prTimeline, meta: state.prMeta)
     }
 
     var body: some View {
@@ -32,7 +32,7 @@ struct PRConversationSidebar: View {
             .padding(.vertical, 12)
         }
         .frame(width: 272)
-        .background(Color(red: 13/255, green: 17/255, blue: 23/255))
+        .themedSurface(state.accentTheme, .sidebar)
         .overlay(alignment: .leading) {
             Rectangle().fill(Color.white.opacity(0.07)).frame(width: 1)
         }
@@ -96,6 +96,9 @@ struct PRConversationSidebar: View {
                 }
                 else if pr.mergeable == true { rows.append(("checkmark.circle.fill", .green, "No conflicts")) }
             }
+            if r.isPushRestricted {
+                rows.append(("lock.fill", .red, "Not authorized to push to \(pr.baseBranch)"))
+            }
             return rows
         }()
 
@@ -129,7 +132,7 @@ struct PRConversationSidebar: View {
                 }
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.hoverPlain)
             .help("Jump to the merge box")
         }
     }
@@ -231,7 +234,7 @@ struct PRConversationSidebar: View {
                         .frame(width: 22, height: 22)
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.hoverPlain)
                 .popover(isPresented: $showLabelPicker, arrowEdge: .leading) {
                     PRLabelPickerPopover(state: state)
                 }

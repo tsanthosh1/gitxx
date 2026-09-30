@@ -7,6 +7,7 @@ public enum AppTab: String, CaseIterable, Identifiable {
     case changes = "Changes"
     case history = "History"
     case pullRequests = "Pull Requests"
+    case actions = "Actions"
     case terminal = "Terminal"
 
     public var id: String { rawValue }
@@ -15,6 +16,7 @@ public enum AppTab: String, CaseIterable, Identifiable {
         case .changes: return "plus.forwardslash.minus"
         case .history: return "clock.arrow.circlepath"
         case .pullRequests: return "arrow.triangle.pull"
+        case .actions: return "play.circle"
         case .terminal: return "terminal.fill"
         }
     }
@@ -23,7 +25,8 @@ public enum AppTab: String, CaseIterable, Identifiable {
         case .changes: return "1"
         case .history: return "2"
         case .pullRequests: return "3"
-        case .terminal: return "4"
+        case .actions: return "4"
+        case .terminal: return "5"
         }
     }
 }
@@ -103,6 +106,7 @@ public final class AppState: ObservableObject {
             if showHome && !isNavigatingHistory { showHome = false }
             if activeTab != oldValue {
                 recordNavigationStep()
+                if activeTab == .actions { actions.activate() } else { actions.deactivate() }
                 if activeTab == .pullRequests {
                     if hasConfiguredGitHubToken && pullRequests.isEmpty {
                         loadPRs()
@@ -118,6 +122,7 @@ public final class AppState: ObservableObject {
     // Repository State
     @Published public var currentRepo: GitRepository? {
         didSet {
+            if activeTab == .actions && oldValue?.remoteUrl != currentRepo?.remoteUrl { actions.activate() }
             guard oldValue?.path != currentRepo?.path else { return }
             historyRef = nil
             historyForeignCommits = []
@@ -137,6 +142,8 @@ public final class AppState: ObservableObject {
     // Changes View State
     @Published public var files: [GitFileStatus] = []
     @Published public var selectedFile: GitFileStatus?
+    /// Title-bar "Open with" popover (⌥⌘O).
+    @Published public var showOpenWith = false
     @Published public var showStashDrawer = false
     /// Branch shown in History; `nil` means the checked-out HEAD.
     @Published public var historyRef: String?
@@ -289,6 +296,34 @@ public final class AppState: ObservableObject {
         }
     }
     @Published public var commandPaletteInitialQuery: String = ""
+    /// Presents the Create branch sheet, prefilled with this name.
+    @Published public var newBranchRequest: NewBranchRequest?
+    @Published public var conflictResolverRequest: ConflictResolverRequest?
+    /// The merge, rebase, cherry-pick or revert waiting to be concluded (refreshed with status).
+    @Published public var operationInProgress: ConflictOperation?
+    /// PR label ("#123") whose branch gets pushed once the in-progress merge is committed.
+    public var pendingPRMergePush: String?
+
+    public var conflictedPaths: [String] {
+        Array(Set(files.filter { $0.changeKind == .unmerged }.map(\.path))).sorted()
+    }
+
+    /// Opens the conflicts list, optionally straight into one file's three-pane merge.
+    public func openConflictResolver(path: String? = nil) {
+        guard currentRepo != nil else { return }
+        showCommandPalette = false
+        showHome = false
+        activeTab = .changes
+        conflictResolverRequest = ConflictResolverRequest(path: path)
+    }
+
+    public func beginNewBranch(name: String = "") {
+        guard currentRepo != nil else { return }
+        showBranchPicker = false
+        showCommandPalette = false
+        newBranchRequest = NewBranchRequest(initialName: name)
+    }
+
     @Published public var showBranchPicker: Bool = false {
         didSet {
             if showBranchPicker && !oldValue {
@@ -610,9 +645,11 @@ public final class AppState: ObservableObject {
 
     let gitService = GitService.shared
     let gitHubService = GitHubAPIService.shared
+    public let actions = ActionsStore()
 
     public init() {
         self.githubToken = KeychainHelper.getGitHubToken()
+        self.actions.state = self
         if let savedMethod = UserDefaults.standard.string(forKey: "gitxx_github_auth_method"),
            let method = GitHubAuthMethod(rawValue: savedMethod) {
             self.authMethod = method
@@ -1099,6 +1136,9 @@ public final class AppState: ObservableObject {
             self.commitsAhead = status.commitsAhead
             self.commitsBehind = status.commitsBehind
             self.files = status.files
+            let inProgress = await ConflictMerge.inProgress(repo: repo.path)
+            guard stillCurrent() else { historyTask?.cancel(); return }
+            if operationInProgress != inProgress { operationInProgress = inProgress }
 
             // Auto-select first meaningful file if nothing selected, or if selected file was deleted
             if self.selectedFile == nil || !self.files.contains(where: { $0.id == self.selectedFile?.id }) {
@@ -1214,6 +1254,10 @@ public final class AppState: ObservableObject {
             } else {
                 return "\(baseURL)/pulls"
             }
+        case .actions:
+            if let run = actions.selectedRun { return run.htmlUrl }
+            if let workflow = actions.selectedWorkflow { return "\(baseURL)/actions/workflows/\(workflow.fileName)" }
+            return "\(baseURL)/actions"
         case .terminal:
             return baseURL
         }
@@ -1271,6 +1315,13 @@ public final class AppState: ObservableObject {
             } else {
                 page = .pullRequestsIndex(filter: prFilter)
                 title = "Pull Requests"
+            }
+        case .actions:
+            page = .actions(runId: actions.selectedRunId)
+            if let run = actions.selectedRun {
+                title = "Run #\(run.runNumber): \(run.displayTitle)"
+            } else {
+                title = "Actions"
             }
         case .terminal:
             page = .terminal
@@ -1434,6 +1485,9 @@ public final class AppState: ObservableObject {
                     self.selectedPR = PullRequest(number: prNumber, title: "PR #\(prNumber)", authorName: "GitHub", headBranch: "main")
                 }
                 self.selectedPRTab = subTab
+            case .actions(let runId):
+                self.activeTab = .actions
+                if let runId { self.actions.openRun(id: runId) } else { self.actions.clearSelection() }
             case .terminal:
                 self.activeTab = .terminal
             case .home:
@@ -1667,36 +1721,38 @@ public final class AppState: ObservableObject {
             return
         }
 
-        let stagedCount = files.filter { $0.isStaged }.count
-        if stagedCount == 0 {
+        let stageFirst = !files.contains { $0.isStaged }
+        if stageFirst {
             showToast("No files staged to commit. Staging all modified files...", type: .info)
-            Task {
-                try? await gitService.stageAll(at: repo.path)
-                try? await gitService.commit(at: repo.path, summary: summary, description: self.commitDescription)
-                self.commitSummary = ""
-                self.commitDescription = ""
-                self.showToast("Committed to \(self.currentBranch)", type: .success)
-                await self.refreshRepoAsync()
-            }
-            return
         }
-
+        let description = commitDescription
+        let commit: @MainActor (Bool) async throws -> Void = { [weak self, gitService] skipHooks in
+            if stageFirst { try await gitService.stageAll(at: repo.path) }
+            try await gitService.commit(at: repo.path, summary: summary, description: description, skipHooks: skipHooks)
+            self?.commitSummary = ""
+            self?.commitDescription = ""
+            await self?.pushPendingPRMergeIfConcluded()
+        }
+        let operation = GitRetryableOperation(title: "Commit failed", verb: "commit", success: "Committed to \(currentBranch)",
+                                              runSkippingHooks: { try await commit(true) }) { try await commit(false) }
         Task {
             do {
-                try await gitService.commit(at: repo.path, summary: summary, description: self.commitDescription)
-                self.commitSummary = ""
-                self.commitDescription = ""
-                self.showToast("Committed to \(self.currentBranch)", type: .success)
-                await self.refreshRepoAsync()
+                try await operation.run()
+                self.showToast(operation.success, type: .success)
             } catch {
-                let description = self.commitDescription
-                presentGitFailure(GitRetryableOperation(title: "Commit failed", verb: "commit", success: "Committed to \(self.currentBranch)") { [weak self, gitService] in
-                    try await gitService.commit(at: repo.path, summary: summary, description: description)
-                    self?.commitSummary = ""
-                    self?.commitDescription = ""
-                }, error: error)
+                presentGitFailure(operation, error: error)
             }
+            await self.refreshRepoAsync()
         }
+    }
+
+    /// After "Update & resolve locally", the merge commit is pushed as soon as the merge is concluded, however that happens.
+    func pushPendingPRMergeIfConcluded() async {
+        guard let label = pendingPRMergePush, let repo = currentRepo,
+              await ConflictMerge.inProgress(repo: repo.path) == nil else { return }
+        pendingPRMergePush = nil
+        showToast("Merge committed. Pushing to update \(label)…", type: .success)
+        pushOrigin()
     }
 
     // MARK: - History Operations
@@ -1741,22 +1797,25 @@ public final class AppState: ObservableObject {
         }
     }
 
-    public func createBranch(name: String) {
+    public func createBranch(name: String, base: GitBranch? = nil, checkout: Bool = true) {
         guard let repo = currentRepo else { return }
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        switchingBranchTo = trimmed
+        let baseName = base.flatMap { $0.isCurrent ? nil : $0.name }
+        let baseIsRemote = base?.isRemote ?? false
+        let success = checkout ? "Created and checked out \(trimmed)" : "Created \(trimmed)" + (baseName.map { " from \($0)" } ?? "")
+        if checkout { switchingBranchTo = trimmed }
         Task {
             defer { if switchingBranchTo == trimmed { switchingBranchTo = nil } }
             do {
-                try await gitService.createBranch(at: repo.path, name: trimmed, checkout: true)
-                if currentRepo?.path == repo.path { currentBranch = trimmed }
+                try await gitService.createBranch(at: repo.path, name: trimmed, base: baseName, baseIsRemote: baseIsRemote, checkout: checkout)
+                if checkout, currentRepo?.path == repo.path { currentBranch = trimmed }
                 switchingBranchTo = nil
-                showToast("Created and checked out \(trimmed)", type: .success)
+                showToast(success, type: .success)
                 await refreshRepoAsync()
             } catch {
-                presentGitFailure(GitRetryableOperation(title: "Couldn't create \(trimmed)", verb: "create the branch", success: "Created and checked out \(trimmed)") { [gitService] in
-                    try await gitService.createBranch(at: repo.path, name: trimmed, checkout: true)
+                presentGitFailure(GitRetryableOperation(title: "Couldn't create \(trimmed)", verb: "create the branch", success: success) { [gitService] in
+                    try await gitService.createBranch(at: repo.path, name: trimmed, base: baseName, baseIsRemote: baseIsRemote, checkout: checkout)
                 }, error: error)
             }
         }

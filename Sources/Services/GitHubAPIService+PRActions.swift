@@ -159,6 +159,8 @@ extension GitHubAPIService {
                 }
               }
               reviewDecision
+              mergeStateStatus
+              baseRef { refUpdateRule { viewerCanPush requiredApprovingReviewCount } }
               latestOpinionatedReviews(first: 30) {
                 nodes { state author { login avatarUrl } }
               }
@@ -243,6 +245,7 @@ extension GitHubAPIService {
             }
         }
 
+        let rule = (prDict["baseRef"] as? [String: Any])?["refUpdateRule"] as? [String: Any]
         return PRDetailMeta(
             prNumber: prNumber,
             nodeId: nodeId,
@@ -252,6 +255,9 @@ extension GitHubAPIService {
             assignees: users("assignees"),
             participants: users("participants"),
             reviewDecision: prDict["reviewDecision"] as? String,
+            mergeStateStatus: prDict["mergeStateStatus"] as? String,
+            viewerCanPushToBase: rule?["viewerCanPush"] as? Bool,
+            requiredApprovingReviewCount: rule?["requiredApprovingReviewCount"] as? Int,
             viewerLogin: (data["viewer"] as? [String: Any])?["login"] as? String,
             viewerPermission: repoDict["viewerPermission"] as? String,
             viewerDidAuthor: (prDict["viewerDidAuthor"] as? Bool) ?? false,

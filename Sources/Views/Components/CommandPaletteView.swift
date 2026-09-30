@@ -100,6 +100,9 @@ public struct PaletteSearchField: NSViewRepresentable {
     var onUpArrow: () -> Void
     var onEscape: () -> Void
     var onTab: (Bool) -> Void = { _ in }
+    var fontSize: CGFloat = 15
+    /// The palette keeps typing focus on its field; popovers with other inputs turn this off.
+    var keepsFocus = true
 
     public init(
         text: Binding<String>,
@@ -108,8 +111,12 @@ public struct PaletteSearchField: NSViewRepresentable {
         onDownArrow: @escaping () -> Void,
         onUpArrow: @escaping () -> Void,
         onEscape: @escaping () -> Void,
-        onTab: @escaping (Bool) -> Void = { _ in }
+        onTab: @escaping (Bool) -> Void = { _ in },
+        fontSize: CGFloat = 15,
+        keepsFocus: Bool = true
     ) {
+        self.fontSize = fontSize
+        self.keepsFocus = keepsFocus
         self._text = text
         self.placeholder = placeholder
         self.onSubmit = onSubmit
@@ -130,7 +137,7 @@ public struct PaletteSearchField: NSViewRepresentable {
         textField.isBordered = false
         textField.drawsBackground = false
         textField.focusRingType = .none
-        textField.font = NSFont.systemFont(ofSize: 15)
+        textField.font = NSFont.systemFont(ofSize: fontSize)
         textField.delegate = context.coordinator
         context.coordinator.textField = textField
         textField.cell?.wraps = false
@@ -151,6 +158,7 @@ public struct PaletteSearchField: NSViewRepresentable {
             nsView.stringValue = text
             nsView.currentEditor()?.selectedRange = NSRange(location: text.utf16.count, length: 0)
         }
+        guard keepsFocus else { return }
         DispatchQueue.main.async {
             if let window = nsView.window, window.firstResponder != nsView.currentEditor() && window.firstResponder != nsView {
                 window.makeFirstResponder(nsView)
@@ -201,6 +209,10 @@ public struct CommandPaletteView: View {
     @ObservedObject var state: AppState
     @State private var query: String = ""
     @State private var selectedIndex: Int = 0
+    /// Only keyboard moves scroll the list; hover changes selection without fighting a trackpad scroll.
+    @State private var scrollToSelection = false
+    @State private var lastPointer: CGPoint?
+    @State private var keyMonitor: Any?
 
     // MARK: - Native Git & Shell Command Detection
 
@@ -269,6 +281,38 @@ public struct CommandPaletteView: View {
             },
             PaletteCommand(title: "Switch to Pull Requests", subtitle: "Review and approve GitHub Pull Requests", iconName: "gitxx.pr.OPEN", shortcut: "⌘3") {
                 state.activeTab = .pullRequests
+            },
+            PaletteCommand(title: "Switch to Actions", subtitle: "GitHub Actions workflow runs, jobs, logs and artifacts", iconName: "play.circle", shortcut: "⌘4") {
+                state.activeTab = .actions
+            },
+            PaletteCommand(title: "Actions: Runs on Current Branch", subtitle: "Workflow runs for \(state.currentRepo?.currentBranch ?? "the checked-out branch")", iconName: "arrow.triangle.branch", shortcut: nil) {
+                state.showActions(branch: state.currentRepo?.currentBranch)
+            },
+            PaletteCommand(title: "Actions: Latest Run on Current Branch", subtitle: "Open the newest workflow run for \(state.currentRepo?.currentBranch ?? "this branch")", iconName: "play.circle.fill", shortcut: nil) {
+                state.openLatestActionsRun(branch: state.currentRepo?.currentBranch)
+            },
+            PaletteCommand(title: "Actions: Failed Runs", subtitle: "Workflow runs that failed", iconName: "xmark.circle", shortcut: nil) {
+                state.showActions(branch: nil)
+                state.actions.filter.status = "failure"
+            },
+            PaletteCommand(title: "Actions: Runs in Progress", subtitle: "Queued and running workflow runs", iconName: "circle.dotted.circle", shortcut: nil) {
+                state.showActions(branch: nil)
+                state.actions.filter.status = "in_progress"
+            },
+            PaletteCommand(title: "Actions: My Runs", subtitle: "Workflow runs you triggered", iconName: "person", shortcut: nil) {
+                state.showActions(branch: nil)
+                state.actions.toggleMine()
+            },
+            PaletteCommand(title: "Actions: Run Workflow…", subtitle: "Start a workflow_dispatch run with inputs", iconName: "play.fill", shortcut: nil) {
+                state.activeTab = .actions
+                state.actions.activate()
+                state.actions.beginDispatch()
+            },
+            PaletteCommand(title: "New Branch…", subtitle: "Create a branch from the current or any other branch", iconName: "arrow.triangle.branch", shortcut: "⇧⌘N") {
+                state.beginNewBranch()
+            },
+            PaletteCommand(title: "Resolve Conflicts…", subtitle: state.conflictedPaths.isEmpty ? "Three-pane merge for conflicted files (none right now)" : "\(state.conflictedPaths.count) conflicted file\(state.conflictedPaths.count == 1 ? "" : "s"): accept yours / theirs or merge", iconName: "arrow.triangle.merge", shortcut: nil) {
+                state.openConflictResolver()
             },
             PaletteCommand(title: "Fetch Origin", subtitle: "Fetch new commits and branches from remote", iconName: "arrow.clockwise", shortcut: "⌘T") {
                 state.fetchOrigin()
@@ -400,10 +444,54 @@ public struct CommandPaletteView: View {
             }
         }
         let trimmed = term.trimmingCharacters(in: .whitespaces)
+        if trimmed.isEmpty || PaletteFuzzy.score(term, "new branch create") != nil {
+            items.append(PaletteCommand(title: "New Branch…", subtitle: "Create a branch and choose its base", iconName: "plus.circle",
+                                        shortcut: "⇧⌘N", section: "Branches", score: trimmed.isEmpty ? 100_000 : 500) {
+                state.beginNewBranch()
+            })
+        }
         if activeMode == .branches, !trimmed.isEmpty, !trimmed.contains(" "),
            !state.branches.contains(where: { $0.displayName == trimmed }) {
             items.append(PaletteCommand(title: "Create branch “\(trimmed)”", subtitle: "From \(state.currentRepo?.currentBranch ?? "current HEAD")", iconName: "plus.circle", shortcut: nil, section: "Branches", score: -1000) {
                 state.createBranch(name: trimmed)
+            })
+            items.append(PaletteCommand(title: "Create branch “\(trimmed)” from…", subtitle: "Choose the base branch first", iconName: "arrow.triangle.branch", shortcut: "⇧⌘N", section: "Branches", score: -1001) {
+                state.beginNewBranch(name: trimmed)
+            })
+        }
+        return items
+    }
+
+    /// Workflows (filter the Actions tab) and loaded runs (open them), plus PR/run cross-links for the current page.
+    private func actionsResults(_ term: String) -> [PaletteCommand] {
+        let store = state.actions
+        var items: [PaletteCommand] = []
+        if let pr = state.selectedPR, state.activeTab == .pullRequests,
+           let score = PaletteFuzzy.best(term, ["actions runs for this pull request", "#\(pr.number) runs", pr.headBranch]) {
+            items.append(PaletteCommand(title: "Actions: Runs for PR #\(pr.number)", subtitle: "Workflow runs on \(pr.headBranch)", iconName: "play.circle", shortcut: nil, section: "Actions", score: score + 50) {
+                state.showActions(branch: pr.headBranch)
+            })
+        }
+        if let run = store.selectedRun, state.activeTab == .actions {
+            for number in store.pullRequestNumbers(for: run) {
+                if let score = PaletteFuzzy.best(term, ["open pull request #\(number)", "pr \(number)"]) {
+                    items.append(PaletteCommand(title: "Open PR #\(number) for this run", subtitle: store.pullRequestTitle(number) ?? run.headBranch, iconName: "gitxx.pr.OPEN", shortcut: nil, section: "Actions", score: score + 50) {
+                        Task { await state.openPullRequest(number: number, tab: .checks) }
+                    })
+                }
+            }
+        }
+        for workflow in store.workflows {
+            guard let score = PaletteFuzzy.best(term, [workflow.name, workflow.fileName]) else { continue }
+            items.append(PaletteCommand(title: "Workflow: \(workflow.name)", subtitle: "Show runs · \(workflow.path)", iconName: "square.stack.3d.up", shortcut: nil, section: "Actions", score: score) {
+                state.showActions(branch: nil, workflowId: workflow.id)
+            })
+        }
+        for run in store.runs.prefix(80) {
+            let fields = [run.displayTitle, "\(run.workflowName) #\(run.runNumber)", run.headBranch]
+            guard let score = PaletteFuzzy.best(term, fields) else { continue }
+            items.append(PaletteCommand(title: run.displayTitle.isEmpty ? run.workflowName : run.displayTitle, subtitle: "\(run.workflowName) #\(run.runNumber) · \(run.actionsStatus.label) · \(run.headBranch)", iconName: run.actionsStatus.iconName, shortcut: nil, section: "Workflow runs", score: score - 20) {
+                state.openActionsRun(runId: run.id)
             })
         }
         return items
@@ -513,7 +601,7 @@ public struct CommandPaletteView: View {
         case .git:
             return gitResults()
         case .commands:
-            return ranked(commandResults(term))
+            return ranked(commandResults(term) + actionsResults(term))
         case .repositories:
             return ranked(repositoryResults(term))
         case .branches:
@@ -529,6 +617,7 @@ public struct CommandPaletteView: View {
                 return ranked(pullRequestResults(term), limit: 6) + ranked(commandResults(term), limit: 4)
             }
             return ranked(commandResults(term), limit: 6)
+                + ranked(actionsResults(term), limit: 5)
                 + ranked(pullRequestResults(term), limit: 6)
                 + ranked(branchResults(term), limit: 5)
                 + ranked(repositoryResults(term), limit: 4)
@@ -592,7 +681,7 @@ public struct CommandPaletteView: View {
                     .clipShape(Capsule())
                     .contentShape(Capsule())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.hoverPlain)
                 .pointerCursor()
                 .help(mode.prefix.isEmpty ? "Search everything" : "Type “\(mode.prefix)” to search \(mode.title.lowercased())")
             }
@@ -633,16 +722,8 @@ public struct CommandPaletteView: View {
                     onSubmit: {
                         executeSelected()
                     },
-                    onDownArrow: {
-                        if !commands.isEmpty {
-                            selectedIndex = min(selectedIndex + 1, commands.count - 1)
-                        }
-                    },
-                    onUpArrow: {
-                        if !commands.isEmpty {
-                            selectedIndex = max(selectedIndex - 1, 0)
-                        }
-                    },
+                    onDownArrow: { moveSelection(1, count: commands.count) },
+                    onUpArrow: { moveSelection(-1, count: commands.count) },
                     onEscape: {
                         if activeMode != .all || !query.isEmpty {
                             query = ""
@@ -705,7 +786,7 @@ public struct CommandPaletteView: View {
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 28)
                         }
-                        ForEach(Array(commands.enumerated()), id: \.element.id) { index, cmd in
+                        ForEach(Array(commands.enumerated()), id: \.offset) { index, cmd in
                             let isSelected = index == selectedIndex
                             let isCLI = cmd.iconName == "terminal.fill"
 
@@ -759,18 +840,26 @@ public struct CommandPaletteView: View {
                                 .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
+                            .pointerCursor()
                             .background(isSelected ? Color.white.opacity(0.14) : Color.clear)
                             .clipShape(RoundedRectangle(cornerRadius: 8))
-                            .onHover { if $0 { selectedIndex = index } }
-                            .id(cmd.id)
+                            .onContinuousHover(coordinateSpace: .global) { phase in
+                                // Rows sliding under a still pointer while scrolling report the same location; only a real move selects.
+                                guard case .active(let point) = phase, point != lastPointer else { return }
+                                lastPointer = point
+                                if selectedIndex != index { selectedIndex = index }
+                            }
+                            .id(index)
                         }
                     }
                     .padding(8)
                 }
                 .frame(maxHeight: 400)
                 .onChange(of: selectedIndex) { _, newIndex in
+                    guard scrollToSelection else { return }
+                    scrollToSelection = false
                     if commands.indices.contains(newIndex) {
-                        proxy.scrollTo(commands[newIndex].id, anchor: nil)
+                        proxy.scrollTo(newIndex, anchor: nil)
                     }
                 }
                 .onChange(of: query) { _, _ in
@@ -799,9 +888,16 @@ public struct CommandPaletteView: View {
                 query = state.commandPaletteInitialQuery
                 state.commandPaletteInitialQuery = ""
             }
+            installKeyMonitor()
+            WebScrollForwarding.suspended = true
+        }
+        .onDisappear {
+            WebScrollForwarding.suspended = false
+            if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
+            keyMonitor = nil
         }
         .frame(width: 640)
-        .background(.ultraThinMaterial)
+        .themedSurface(state.accentTheme, .elevated)
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -832,6 +928,33 @@ public struct CommandPaletteView: View {
                 .font(.system(size: 10.5))
         }
         .foregroundStyle(.secondary)
+    }
+
+    private func moveSelection(_ delta: Int, count: Int) {
+        guard count > 0 else { return }
+        scrollToSelection = true
+        selectedIndex = min(max(selectedIndex + delta, 0), count - 1)
+    }
+
+    /// Arrow keys, Return and Escape work while the palette is open even if the search field lost focus.
+    private func installKeyMonitor() {
+        guard keyMonitor == nil else { return }
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard state.showCommandPalette,
+                  event.modifierFlags.intersection([.command, .control, .option]).isEmpty else { return event }
+            switch event.keyCode {
+            case 125: moveSelection(1, count: filteredCommands.count); return nil
+            case 126: moveSelection(-1, count: filteredCommands.count); return nil
+            case 36, 76:
+                if event.window?.firstResponder is NSTextView, (event.window?.firstResponder as? NSTextView)?.hasMarkedText() == true { return event }
+                executeSelected(); return nil
+            case 53:
+                if activeMode != .all || !query.isEmpty { query = "" } else { state.showCommandPalette = false }
+                return nil
+            default:
+                return event
+            }
+        }
     }
 
     private func executeSelected() {
