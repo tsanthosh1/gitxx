@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "GitXX Links",
+  "version": "2.0.0",
+  "description": "Opens GitHub pull requests, commits, Actions and repositories in GitXX, wherever the link comes from.",
+
+  "minimum_chrome_version": "116",
+  "permissions": ["storage", "tabs", "webNavigation", "contextMenus", "scripting", "nativeMessaging", "declarativeNetRequestWithHostAccess"],
+  "host_permissions": ["https://github.com/*", "https://www.github.com/*"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "content_scripts": [{
+    "matches": ["https://github.com/*", "https://www.github.com/*"],
+    "js": ["content.js"],
+    "run_at": "document_start"
+  }],
+  "web_accessible_resources": [
+    { "resources": ["redirect.html"], "matches": ["<all_urls>"] },
+    { "resources": ["rules.js"], "matches": ["https://github.com/*", "https://www.github.com/*"] }
+  ],
+  "action": {
+    "default_title": "GitXX Links",
+    "default_popup": "popup.html",
+    "default_icon": { "16": "icons/icon-16.png", "32": "icons/icon-32.png" }
+  },
+  "icons": { "16": "icons/icon-16.png", "32": "icons/icon-32.png", "48": "icons/icon-48.png", "128": "icons/icon-128.png" }
+}

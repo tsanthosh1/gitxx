@@ -23,7 +23,8 @@ GitXX is a native macOS application built using **Swift 5.9+**, **SwiftUI**, **A
   - `Changes/`: Staged/unstaged files list, commit message box, AI commit assistant.
   - `History/`: Commit graph, log sidebar, and commit detail inspector.
  - `Actions/`: GitHub Actions tab: searchable workflow sidebar, run list with filters, run detail (jobs, per-step logs, annotations, artifacts), and the workflow_dispatch sheet. State lives in `Sources/State/ActionsStore.swift`, owned by `AppState.actions`.
-  - `Terminal/`: Embedded interactive PTY terminal emulator.
+  - `Integrations/`: The separate Integrations window (MCP servers, Slack Review Requests). MCP client/OAuth live in `Sources/Services/MCP/`; state in `IntegrationsStore` (servers, tools, assistant tool specs) and `ReviewRequestsStore`. MCP configs and tokens go in the Keychain only (`MCPSecretStore`), never UserDefaults.
+ - `Terminal/`: Embedded interactive PTY terminal emulator.
   - `Components/`: Popovers, sheets (Settings, Help, Auth), toasts, and top toolbars.
 
 ---

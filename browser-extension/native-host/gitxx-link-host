@@ -1,0 +1,29 @@
+#!/bin/bash
+# Chrome native messaging host for the GitXX Links extension. Chrome starts it once per message and writes a
+# 4-byte little-endian length followed by JSON ({"url": "..."}) to stdin; the reply uses the same framing.
+# Only github.com links are accepted, and they are handed to GitXX through Launch Services.
+
+reply() {
+  local n=${#1}
+  printf "\\x$(printf %02x $((n & 255)))\\x$(printf %02x $((n >> 8 & 255)))\\x00\\x00"
+  printf '%s' "$1"
+}
+
+len=$(dd bs=1 count=4 2>/dev/null | od -An -tu4 | tr -d ' \n')
+if [[ ! "$len" =~ ^[0-9]+$ ]] || (( len == 0 || len > 65536 )); then
+  reply '{"ok":false,"error":"bad message"}'
+  exit 0
+fi
+message=$(dd bs=1 count="$len" 2>/dev/null)
+url=$(printf '%s' "$message" | sed -n 's/.*"url"[[:space:]]*:[[:space:]]*"\([^"\\]*\)".*/\1/p')
+
+case "$url" in
+  https://github.com/*|https://www.github.com/*) ;;
+  *) reply '{"ok":false,"error":"not a GitHub link"}'; exit 0 ;;
+esac
+
+if open -b com.gitxx.macos "$url" >/dev/null 2>&1; then
+  reply '{"ok":true}'
+else
+  reply '{"ok":false,"error":"GitXX is not installed"}'
+fi

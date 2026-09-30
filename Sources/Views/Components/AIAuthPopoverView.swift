@@ -241,7 +241,7 @@ public struct AIAuthPopoverView: View {
 
                 Button("Open Browser Again") {
                     if let url = URL(string: code.verificationUri) {
-                        NSWorkspace.shared.open(url)
+                        LinkRouter.open(url)
                     }
                 }
                 .buttonStyle(.link)

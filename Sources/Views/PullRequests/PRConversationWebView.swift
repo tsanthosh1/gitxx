@@ -269,7 +269,7 @@ public struct PRConversationWebView: NSViewRepresentable {
                     if case .actionsRun = GitHubURLTarget.parse(url.absoluteString)?.kind {
                         NotificationCenter.default.post(name: NSNotification.Name("OpenGitHubLinkInApp"), object: url)
                     } else {
-                        NSWorkspace.shared.open(url)
+                        LinkRouter.open(url)
                     }
                 }
                 decisionHandler(.cancel)

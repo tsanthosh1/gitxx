@@ -105,7 +105,7 @@ struct PRCommitsView: View {
         Button("Copy Message") { copy(commit.message, label: "message") }
         if let url = commit.htmlUrl.flatMap(URL.init(string:)) {
             Divider()
-            Button("Open on GitHub") { NSWorkspace.shared.open(url) }
+            Button("Open on GitHub") { LinkRouter.open(url) }
         }
     }
 
@@ -152,7 +152,7 @@ struct PRCommitsView: View {
                 .help("Copy full SHA")
                 if let url = commit.htmlUrl.flatMap(URL.init(string:)) {
                     Button {
-                        NSWorkspace.shared.open(url)
+                        LinkRouter.open(url)
                     } label: {
                         Image(systemName: "arrow.up.forward.square")
                     }
@@ -214,7 +214,7 @@ struct PRCommitsView: View {
                     allowComments: false,
                     onOpenInEditor: { path in
                         guard let repoPath = state.currentRepo?.path else { return }
-                        NSWorkspace.shared.open(URL(fileURLWithPath: (repoPath as NSString).appendingPathComponent(path)))
+                        LinkRouter.open(URL(fileURLWithPath: (repoPath as NSString).appendingPathComponent(path)))
                     },
                     onFileContent: { path in
                         try await state.prFileContent(path: path, ref: commit.sha)

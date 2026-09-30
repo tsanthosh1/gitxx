@@ -104,7 +104,7 @@ extension AppState {
     public func openGitHubTarget(_ target: GitHubURLTarget) {
         guard let local = localRepository(owner: target.owner, repo: target.repo) else {
             showToast("\(target.slug) isn't open in GitXX — opening in browser", type: .info)
-            NSWorkspace.shared.open(target.url)
+            LinkRouter.openInBrowser([target.url])
             return
         }
         Task {
@@ -181,26 +181,37 @@ extension AppState {
     }
 
     /// Opens a PR in the current repository, fetching it if it isn't in the loaded list.
+    /// Any cached list (every filter) or an earlier one-off fetch paints the PR at once; loadPRDetails refreshes it.
     public func openPullRequest(number: Int, tab: PRDetailTab = .overview) async {
         activeTab = .pullRequests
-        if let pr = pullRequests.first(where: { $0.number == number }) {
-            selectedPR = pr
-            selectedPRTab = tab
-            loadPRDetails(for: pr)
+        guard let ctx = prRepoContext() else { return }
+        let key = "\(ctx.owner)/\(ctx.repo)#\(number)".lowercased()
+        if let pr = pullRequests.first(where: { $0.number == number })
+            ?? searchablePullRequests.first(where: { $0.number == number })
+            ?? fetchedPullRequests[key] {
+            show(pr, tab: tab)
             return
         }
-        guard let ctx = prRepoContext() else { return }
+        openingPRNumber = number
+        defer { if openingPRNumber == number { openingPRNumber = nil } }
         do {
             guard let pr = try await gitHubService.fetchPullRequest(owner: ctx.owner, repo: ctx.repo, number: number, token: ctx.token) else {
                 showToast("Pull request #\(number) not found", type: .error)
                 return
             }
-            selectedPR = pr
-            selectedPRTab = tab
-            loadPRDetails(for: pr)
+            fetchedPullRequests[key] = pr
+            // Dropped if the user backed out of the loading page or moved to another repository meanwhile.
+            guard openingPRNumber == number, let now = prRepoContext(), now.owner == ctx.owner, now.repo == ctx.repo else { return }
+            show(pr, tab: tab)
         } catch {
             showToast("Couldn't open #\(number): \(error.localizedDescription)", type: .error)
         }
+    }
+
+    private func show(_ pr: PullRequest, tab: PRDetailTab) {
+        selectedPRTab = tab
+        selectedPR = pr
+        loadPRDetails(for: pr)
     }
 
     /// PRs known for the current repository across every cached list filter (for palette search).

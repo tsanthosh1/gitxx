@@ -24,6 +24,12 @@ if [ -f "bin/gitxx" ]; then
     chmod +x "$RESOURCES_DIR/bin/gitxx"
 fi
 
+# "GitXX Links" Chrome extension (Settings › General › GitHub links copies it somewhere Chrome can load it from)
+rm -rf "$RESOURCES_DIR/ChromeExtension"
+cp -R "browser-extension/chrome" "$RESOURCES_DIR/ChromeExtension"
+cp "browser-extension/native-host/gitxx-link-host" "$RESOURCES_DIR/gitxx-link-host"
+chmod 755 "$RESOURCES_DIR/gitxx-link-host"
+
 # App icon (regenerated from assets/AppIcon-source.png when the source is newer)
 if [ -f "assets/AppIcon-source.png" ] && [ "assets/AppIcon-source.png" -nt "assets/AppIcon.icns" ]; then
     swift scripts/make-icon.swift assets/AppIcon-source.png assets/AppIcon.icns
@@ -74,8 +80,7 @@ cat <<EOF > "$CONTENTS_DIR/Info.plist"
                 <string>gitxx</string>
             </array>
         </dict>
-    </array>
-</dict>
+    </array></dict>
 </plist>
 EOF
 

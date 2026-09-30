@@ -483,6 +483,19 @@ public enum ConversationHTMLBuilder {
             """
         }
 
+        // Each button kind has a fixed-width slot, left empty in rows without it, so kinds line up down the list.
+        // Slots no row uses are dropped.
+        let usesExplainSlot = sortedChecks.contains { $0.group == .failing }
+        let usesRerunSlot = isActive && sortedChecks.contains { $0.isRerunnable && $0.actionsJobId != nil }
+        let usesOpenSlot = sortedChecks.contains {
+            $0.actionsRunId.flatMap(Int.init) != nil || !($0.outputSummary?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+        }
+        let usesLinkSlot = sortedChecks.contains { !($0.htmlUrl?.isEmpty ?? true) }
+        func slot(_ used: Bool, _ kind: String, _ button: String) -> String {
+            guard used else { return "" }
+            return button.isEmpty ? "<span class=\"ck-slot ck-slot-\(kind)\"></span>" : button
+        }
+
         var checksRowsHTML = ""
         for group in PRCheckRun.Group.allCases {
             let items = sortedChecks.filter { $0.group == group }
@@ -524,21 +537,23 @@ public enum ConversationHTMLBuilder {
                 let summary = c.outputSummary?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 let rowId = "ck-" + String(c.id.unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }.map(Character.init))
 
-                var buttons = ""
+                var explain = "", rerun = "", open = "", link = ""
                 if c.group == .failing {
-                    buttons += "<button type=\"button\" class=\"ck-btn ck-btn-ai\" title=\"Ask the AI assistant why it failed\" onclick=\"event.stopPropagation(); sendAction({action:'explainCheck', name:'\(escapeJS(c.name))'})\">\(HTMLIcon.sparkle)<span>Explain</span></button>"
+                    explain = "<button type=\"button\" class=\"ck-btn ck-btn-ai ck-slot-explain\" title=\"Ask the AI assistant why it failed\" onclick=\"event.stopPropagation(); sendAction({action:'explainCheck', name:'\(escapeJS(c.name))'})\">\(HTMLIcon.sparkle)<span>Explain</span></button>"
                 }
                 if isActive, c.isRerunnable, let job = c.actionsJobId {
-                    buttons += "<button type=\"button\" class=\"ck-btn\" title=\"Re-run this job\" data-busy=\"…\" onclick=\"event.stopPropagation(); sendAction({action:'rerunCheck', jobId:'\(escapeJS(job))'}, 'rerun-\(escapeJS(job))', this)\">\(HTMLIcon.sync)<span>Re-run</span></button>"
+                    rerun = "<button type=\"button\" class=\"ck-btn ck-slot-rerun\" title=\"Re-run this job\" data-busy=\"…\" onclick=\"event.stopPropagation(); sendAction({action:'rerunCheck', jobId:'\(escapeJS(job))'}, 'rerun-\(escapeJS(job))', this)\">\(HTMLIcon.sync)<span>Re-run</span></button>"
                 }
                 if let runId {
-                    buttons += "<button type=\"button\" class=\"ck-btn ck-btn-primary\" title=\"Steps and logs in the Actions tab\" onclick=\"event.stopPropagation(); sendAction({action:'openCheckRun', runId:\(runId), jobId:\(jobId.map(String.init) ?? "null")})\">\(HTMLIcon.play)<span>Logs</span></button>"
+                    open = "<button type=\"button\" class=\"ck-btn ck-btn-primary ck-slot-open\" title=\"Steps and logs in the Actions tab\" onclick=\"event.stopPropagation(); sendAction({action:'openCheckRun', runId:\(runId), jobId:\(jobId.map(String.init) ?? "null")})\">\(HTMLIcon.play)<span>Logs</span></button>"
                 } else if !summary.isEmpty {
-                    buttons += "<button type=\"button\" class=\"ck-btn\" title=\"Show the check's report\" onclick=\"event.stopPropagation(); toggleCheckSummary('\(rowId)')\">\(HTMLIcon.chevronDown)<span>Report</span></button>"
+                    open = "<button type=\"button\" class=\"ck-btn ck-slot-open\" title=\"Show the check's report\" onclick=\"event.stopPropagation(); toggleCheckSummary('\(rowId)')\">\(HTMLIcon.chevronDown)<span>Report</span></button>"
                 }
-                if let link = c.htmlUrl, !link.isEmpty {
-                    buttons += "<a class=\"ck-btn ck-btn-icon\" href=\"\(escapeAttr(link))\" title=\"Open on GitHub\" onclick=\"event.stopPropagation()\">\(HTMLIcon.linkExternal)</a>"
+                if let url = c.htmlUrl, !url.isEmpty {
+                    link = "<a class=\"ck-btn ck-btn-icon ck-slot-link\" href=\"\(escapeAttr(url))\" title=\"Open on GitHub\" onclick=\"event.stopPropagation()\">\(HTMLIcon.linkExternal)</a>"
                 }
+                let buttons = slot(usesExplainSlot, "explain", explain) + slot(usesRerunSlot, "rerun", rerun)
+                    + slot(usesOpenSlot, "open", open) + slot(usesLinkSlot, "link", link)
 
                 let rowClick: String
                 if let runId {
@@ -1698,6 +1713,11 @@ html { padding-top: var(--gitxx-top-inset, 0px); scroll-padding-top: calc(var(--
 .ck-btn-ai:hover { background: rgba(163,113,247,0.15); color: #e2c5ff; }
 .ck-btn-icon { width: 26px; padding: 0; justify-content: center; border-color: transparent; color: #8b949e; }
 .ck-btn[disabled] { opacity: 0.6; cursor: default; }
+.ck-actions > * { flex: none; box-sizing: border-box; justify-content: center; }
+.ck-slot-explain { width: 84px; }
+.ck-slot-rerun { width: 80px; }
+.ck-slot-open { width: 82px; }
+.ck-slot-link { width: 26px; }
 .ck-report {
   margin: 0 16px 10px 48px; padding: 10px 12px; font-size: 12px; line-height: 1.5; color: #c9d1d9; white-space: pre-wrap;
   background: rgba(110,118,129,0.08); border: 1px solid #21262d; border-radius: 6px; max-height: 240px; overflow: auto;

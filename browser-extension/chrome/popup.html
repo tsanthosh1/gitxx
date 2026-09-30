@@ -1,0 +1,30 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="popup">
+  <header>
+    <img src="icons/icon-32.png" width="20" height="20" alt="">
+    <strong>GitXX Links</strong>
+    <label class="switch" title="Send GitHub links to GitXX">
+      <input type="checkbox" id="enabled"><span></span>
+    </label>
+  </header>
+
+  <button id="open-here" class="primary wide">Open this page in GitXX</button>
+
+  <section>
+    <p class="muted small">Repositories, pull requests, commits and Actions links go to GitXX, from other apps and from
+      browsing alike. Other GitHub pages (issues, files, branches…) stay here.</p>
+    <label class="stack">Only these owners <span class="muted small">(comma-separated, empty = all)</span>
+      <input type="text" id="owners" placeholder="e.g. chargebee">
+    </label>
+  </section>
+
+  <p class="muted small">To view something here, use Open in browser in GitXX; that tab then browses GitHub normally.
+    Repositories that aren't on your Mac come back here automatically.</p>
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

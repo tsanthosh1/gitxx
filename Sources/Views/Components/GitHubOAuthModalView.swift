@@ -114,9 +114,9 @@ public struct GitHubOAuthModalView: View {
                     // Action Button to Open Browser
                     Button {
                         if let uri = state.githubOAuthVerificationUri, let url = URL(string: uri) {
-                            NSWorkspace.shared.open(url)
+                            LinkRouter.open(url)
                         } else if let url = URL(string: "https://github.com/login/device") {
-                            NSWorkspace.shared.open(url)
+                            LinkRouter.open(url)
                         }
                     } label: {
                         HStack(spacing: 6) {

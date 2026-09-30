@@ -421,7 +421,7 @@ private struct CheckDetailPane: View {
             }
             if let urlString = check.htmlUrl, let url = URL(string: urlString) {
                 Button {
-                    NSWorkspace.shared.open(url)
+                    LinkRouter.open(url)
                 } label: {
                     Image(systemName: "arrow.up.forward.square")
                 }

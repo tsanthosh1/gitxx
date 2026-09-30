@@ -425,7 +425,7 @@ struct PRDetailHeaderView: View {
                 state.selectedPRTab = .overview
                 state.prThreadFilter = .unresolved
             case .conflicts:
-                if let url = URL(string: pr.url + "/conflicts") { NSWorkspace.shared.open(url) }
+                if let url = URL(string: pr.url + "/conflicts") { LinkRouter.open(url) }
             case .updateBranch: Task { try? await state.updateSelectedPRBranch() }
             case .readyForReview: Task { try? await state.setSelectedPRDraft(false) }
             }
@@ -544,7 +544,7 @@ struct PRDetailHeaderView: View {
         Menu {
             if !pr.url.isEmpty, let url = URL(string: pr.url) {
                 Button {
-                    NSWorkspace.shared.open(url)
+                    LinkRouter.open(url)
                 } label: {
                     Label("Open in Browser", systemImage: "safari")
                 }

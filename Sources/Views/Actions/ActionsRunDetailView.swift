@@ -180,7 +180,7 @@ private struct ActionsRunHeader: View {
                 .disabled(store.isBusy("rerun-\(run.id)"))
             }
             Button {
-                if let url = URL(string: run.htmlUrl) { NSWorkspace.shared.open(url) }
+                if let url = URL(string: run.htmlUrl) { LinkRouter.open(url) }
             } label: {
                 Image(systemName: "arrow.up.forward.square")
             }
@@ -191,7 +191,7 @@ private struct ActionsRunHeader: View {
                 if !run.workflowPath.isEmpty, let slug = store.repoSlug {
                     Divider()
                     Button("View workflow file") {
-                        if let url = URL(string: "https://github.com/\(slug)/blob/\(run.headSha)/\(run.workflowPath)") { NSWorkspace.shared.open(url) }
+                        if let url = URL(string: "https://github.com/\(slug)/blob/\(run.headSha)/\(run.workflowPath)") { LinkRouter.open(url) }
                     }
                 }
             } label: {
@@ -540,7 +540,7 @@ private struct ActionsJobView: View {
                                 .font(.system(size: 12))
                                 .foregroundStyle(.secondary)
                             if let url = job.htmlUrl.flatMap(URL.init(string:)) {
-                                Button("Watch live on GitHub") { NSWorkspace.shared.open(url) }
+                                Button("Watch live on GitHub") { LinkRouter.open(url) }
                                     .buttonStyle(PRActionButtonStyle(.subtle, size: .compact))
                             }
                         }
@@ -592,7 +592,7 @@ private struct ActionsJobView: View {
                     .disabled(store.isBusy("rerun-job-\(job.id)"))
                 }
                 if let url = job.htmlUrl.flatMap(URL.init(string:)) {
-                    Button { NSWorkspace.shared.open(url) } label: { Image(systemName: "arrow.up.forward.square") }
+                    Button { LinkRouter.open(url) } label: { Image(systemName: "arrow.up.forward.square") }
                         .buttonStyle(PRActionButtonStyle(.subtle, size: .compact))
                         .help("Open this job on GitHub")
                 }

@@ -66,6 +66,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         let voice = item("Talk to AI Assistant", key: "i", action: #selector(post(_:)), note: "ToggleAIVoice", symbol: "mic")
         voice.keyEquivalentModifierMask = [.command, .option]
         menu.addItem(voice)
+        menu.addItem(item("Slack Review Requests", key: "", action: #selector(showReviewRequests), symbol: "person.2.badge.gearshape"))
         menu.addItem(.separator())
         menu.addItem(item("Settings…", key: ",", action: #selector(post(_:)), note: "OpenSettingsAction", symbol: "gearshape"))
         menu.addItem(item("Hide Menu Bar Icon", key: "", action: #selector(hideIcon)))
@@ -89,7 +90,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     @objc private func showApp() {
         NSApp.activate(ignoringOtherApps: true)
-        if let window = NSApp.windows.first(where: { !$0.isSheet && $0.canBecomeMain }) {
+        if let window = WindowAccessor.mainWindow ?? NSApp.windows.first(where: { !$0.isSheet && $0.canBecomeMain }) {
             if window.isMiniaturized { window.deminiaturize(nil) }
             window.makeKeyAndOrderFront(nil)
         }
@@ -107,6 +108,10 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         DispatchQueue.main.async {
             NotificationCenter.default.post(name: NSNotification.Name(name), object: nil)
         }
+    }
+
+    @objc private func showReviewRequests() {
+        IntegrationsWindowController.shared.show(.reviewRequests)
     }
 
     @objc private func hideIcon() {

@@ -210,7 +210,7 @@ public struct PageHistoryPopoverView: View {
             .padding(.vertical, 7)
             .background(Color(NSColor.windowBackgroundColor).opacity(0.4))
         }
-        .frame(width: 390)
+        .frame(width: 780)
         .background(Color(NSColor.windowBackgroundColor))
         .onAppear {
             selectedIndex = 0

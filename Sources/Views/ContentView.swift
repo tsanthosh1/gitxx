@@ -277,6 +277,27 @@ public struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("ToggleAIChat"))) { _ in
             AIChatStore.shared.toggle()
         }
+        .environment(\.openURL, OpenURLAction { url in
+            LinkRouter.open(url)
+            return .handled
+        })
+        .onAppear {
+            ReviewRequestsStore.shared.githubToken = { [weak state] in state?.effectiveGitHubToken }
+            IntegrationsStore.shared.connectEnabled()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("OpenIntegrations"))) { note in
+            IntegrationsWindowController.shared.show((note.object as? String).flatMap(IntegrationsWindowController.Page.init(rawValue:)))
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("AIChatSendPrompt"))) { note in
+            guard let prompt = note.object as? String else { return }
+            let chat = AIChatStore.shared
+            if !chat.isOpen { chat.toggle() }
+            if chat.isRunning {
+                chat.input = prompt
+            } else {
+                chat.send(prompt, state: state)
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("NewBranchAction"))) { _ in
             state.beginNewBranch()
         }
@@ -297,7 +318,7 @@ public struct ContentView: View {
             if let target = GitHubURLTarget.parse(url.absoluteString), state.localRepository(owner: target.owner, repo: target.repo) != nil {
                 state.openGitHubTarget(target)
             } else {
-                NSWorkspace.shared.open(url)
+                LinkRouter.openInBrowser([url])
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RunDemoTerminalCommand"))) { _ in

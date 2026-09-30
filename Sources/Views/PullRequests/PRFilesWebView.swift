@@ -208,7 +208,7 @@ struct PRFilesWebView: NSViewRepresentable {
         ) {
             if navigationAction.navigationType == .linkActivated {
                 if let url = navigationAction.request.url, ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
-                    NSWorkspace.shared.open(url)
+                    LinkRouter.open(url)
                 }
                 decisionHandler(.cancel)
                 return

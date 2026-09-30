@@ -8,9 +8,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         KeyboardLayoutAdapter.shared.install()
         MenuBarController.shared.start()
         KeyboardNavigation.installCommandReturn()
+        LinkRouter.refreshExtensionIfInstalled()
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
-
         DispatchQueue.main.async {
             for window in NSApp.windows {
                 window.tabbingMode = .disallowed
@@ -295,6 +295,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
+        if let idx = CommandLine.arguments.firstIndex(of: "--snapshot-integrations"), idx + 2 < CommandLine.arguments.count {
+            let page = IntegrationsWindowController.Page(rawValue: CommandLine.arguments[idx + 1]) ?? .reviewRequests
+            let targetPath = CommandLine.arguments[idx + 2]
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                IntegrationsWindowController.shared.show(page)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                    self.captureWindow(to: targetPath, window: NSApp.keyWindow)
+                }
+            }
+        }
+
         if let idx = CommandLine.arguments.firstIndex(of: "--snapshot-pr-diff"), idx + 1 < CommandLine.arguments.count {
             let targetPath = CommandLine.arguments[idx + 1]
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
@@ -332,9 +343,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls {
-            if url.scheme == "gitxx", let components = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+            if url.scheme == "http" || url.scheme == "https" {
+                ExternalLinkInbox.receive(url)
+            } else if url.scheme == "gitxx", let components = URLComponents(url: url, resolvingAgainstBaseURL: false) {
                 if let path = components.queryItems?.first(where: { $0.name == "path" })?.value {
                     NotificationCenter.default.post(name: NSNotification.Name("OpenRepoPathFromCLI"), object: path)
+                } else if let link = components.queryItems?.first(where: { $0.name == "url" })?.value, let web = URL(string: link) {
+                    ExternalLinkInbox.receive(web)
                 }
             } else if url.isFileURL {
                 NotificationCenter.default.post(name: NSNotification.Name("OpenRepoPathFromCLI"), object: url.path)
@@ -347,14 +362,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         captureWindow(to: path)
     }
 
-    func captureWindow(to path: String) {
-        for w in NSApp.windows {
-            w.orderFrontRegardless()
+    func captureWindow(to path: String, window explicit: NSWindow? = nil) {
+        if explicit == nil {
+            for w in NSApp.windows {
+                w.orderFrontRegardless()
+            }
         }
         print("DEBUG: captureWindow windows = \(NSApp.windows.count): \(NSApp.windows.map { "\($0.title) (vis: \($0.isVisible), cv: \($0.contentView != nil))" })")
 
         // If a sheet window is open (e.g. Preferences), capture that sheet or key window
-        let targetWindow = NSApp.windows.first(where: { $0.isSheet && $0.isVisible && $0.contentView != nil })
+        let targetWindow = explicit
+            ?? NSApp.windows.first(where: { $0.isSheet && $0.isVisible && $0.contentView != nil })
             ?? WindowAccessor.mainWindow
             ?? NSApp.keyWindow
             ?? NSApp.windows.first(where: { $0.isVisible && $0.contentView != nil })
@@ -401,6 +419,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             sender.windows.first?.makeKeyAndOrderFront(nil)
         }
         return true
+    }
+}
+
+/// Web links handed to GitXX from outside (Shortcuts, `open -a GitXX <url>`, `gitxx <url>`). Links that arrive
+/// while the app is still launching wait here until the window's state is ready to take them.
+@MainActor
+enum ExternalLinkInbox {
+    static let notification = NSNotification.Name("OpenExternalGitHubURL")
+    private static var pending: [URL] = []
+
+    static func receive(_ url: URL) {
+        pending.append(url)
+        NotificationCenter.default.post(name: notification, object: nil)
+    }
+
+    static func drain() -> [URL] {
+        defer { pending.removeAll() }
+        return pending
     }
 }
 
@@ -503,6 +539,17 @@ struct GitXXApp: App {
                     NotificationCenter.default.post(name: NSNotification.Name("ToggleAIVoice"), object: nil)
                 }
                 .keyboardShortcut("i", modifiers: [.command, .option])
+
+                Divider()
+
+                Button("Slack Review Requests") {
+                    IntegrationsWindowController.shared.show(.reviewRequests)
+                }
+                .keyboardShortcut("l", modifiers: [.command, .shift])
+
+                Button("Integrations & MCP Servers…") {
+                    IntegrationsWindowController.shared.show(.servers)
+                }
             }
 
             CommandMenu("Repository") {

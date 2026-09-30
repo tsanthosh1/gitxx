@@ -483,9 +483,9 @@ public class UnifiedNSTextView: NSTextView {
 
     public override func clicked(onLink link: Any, at charIndex: Int) {
         if let url = link as? URL {
-            NSWorkspace.shared.open(url)
+            LinkRouter.open(url)
         } else if let str = link as? String, let url = URL(string: str) {
-            NSWorkspace.shared.open(url)
+            LinkRouter.open(url)
         } else {
             super.clicked(onLink: link, at: charIndex)
         }

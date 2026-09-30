@@ -281,7 +281,7 @@ public struct PRDetailView: View {
                         },
                         onOpenInEditor: { path in
                             guard let repoPath = state.currentRepo?.path else { return }
-                            NSWorkspace.shared.open(URL(fileURLWithPath: (repoPath as NSString).appendingPathComponent(path)))
+                            LinkRouter.open(URL(fileURLWithPath: (repoPath as NSString).appendingPathComponent(path)))
                         },
                         onSwitchTab: { tab in state.selectedPRTab = tab },
                         onAction: { action in await state.handlePRWebAction(action) },

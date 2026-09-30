@@ -139,7 +139,7 @@ struct ActionsRunListPane: View {
                             store.setWorkflow(workflow, enabled: !workflow.isActive)
                         }
                         if let url = workflow.htmlUrl.flatMap(URL.init(string:)) {
-                            Button("Open workflow file on GitHub") { NSWorkspace.shared.open(url) }
+                            Button("Open workflow file on GitHub") { LinkRouter.open(url) }
                         }
                         Button("Copy path") {
                             NSPasteboard.general.clearContents()
@@ -538,7 +538,7 @@ struct ActionsRunMenu: View {
             Button("Show runs by \(run.actorLogin)") { store.filter.actor = run.actorLogin }
         }
         Divider()
-        Button("Open on GitHub") { if let url = URL(string: run.htmlUrl) { NSWorkspace.shared.open(url) } }
+        Button("Open on GitHub") { if let url = URL(string: run.htmlUrl) { LinkRouter.open(url) } }
         Button("Copy run link") {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(run.htmlUrl, forType: .string)

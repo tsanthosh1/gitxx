@@ -238,7 +238,7 @@ struct ActionsWorkflowSidebar: View {
         Divider()
         Button(workflow.isActive ? "Disable workflow" : "Enable workflow") { store.setWorkflow(workflow, enabled: !workflow.isActive) }
         if let url = workflow.htmlUrl.flatMap(URL.init(string:)) {
-            Button("Open workflow file on GitHub") { NSWorkspace.shared.open(url) }
+            Button("Open workflow file on GitHub") { LinkRouter.open(url) }
         }
         Button("Copy path") {
             NSPasteboard.general.clearContents()

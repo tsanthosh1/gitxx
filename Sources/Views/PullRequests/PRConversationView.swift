@@ -630,7 +630,7 @@ private struct ReviewThreadView: View {
 
                 if let url = comment.htmlUrl, let nsurl = URL(string: url) {
                     Button {
-                        NSWorkspace.shared.open(nsurl)
+                        LinkRouter.open(nsurl)
                     } label: {
                         Image(systemName: "arrow.up.forward.square")
                             .font(.system(size: 11))

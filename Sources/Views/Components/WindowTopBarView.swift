@@ -182,6 +182,13 @@ public struct WindowTopBarView: View {
                     state.refreshRepo()
                 }
 
+                WindowTopBarIconButton(
+                    systemName: "person.2.badge.gearshape",
+                    helpText: "Slack Review Requests & Integrations (⇧⌘L)"
+                ) {
+                    IntegrationsWindowController.shared.show(.reviewRequests)
+                }
+
                 // Settings
                 WindowTopBarIconButton(
                     systemName: "gearshape",

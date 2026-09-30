@@ -406,6 +406,7 @@ public final class AIChatStore: ObservableObject {
         var parts = [basePrompt]
         let date = Date().formatted(date: .complete, time: .omitted)
         parts.append("Today is \(date).")
+        if let integrations = IntegrationsStore.shared.assistantSummary { parts.append(integrations) }
         if let custom = UserDefaults.standard.string(forKey: customInstructionsKey)?
             .trimmingCharacters(in: .whitespacesAndNewlines), !custom.isEmpty {
             parts.append("## Instructions from the user (always follow these)\n" + custom)
@@ -593,7 +594,8 @@ public final class AIChatStore: ObservableObject {
             let reply: AIChatReply
             do {
                 reply = try await AIChatService.complete(provider: provider, model: model, githubToken: tools.githubToken,
-                                                         messages: wire, tools: AIChatTools.specs, userInitiated: turn == 0)
+                                                         messages: wire, tools: AIChatTools.specs + IntegrationsStore.shared.assistantToolSpecs,
+                                                         userInitiated: turn == 0)
             } catch {
                 if Task.isCancelled { return }
                 items.append(AIChatItem(kind: .error(error.localizedDescription)))
@@ -609,8 +611,10 @@ public final class AIChatStore: ObservableObject {
 
             for call in reply.toolCalls {
                 let args = AIChatTools.parse(call.arguments)
-                let summary = AIChatTools.summary(name: call.name, args: args)
-                let changesThings = AIChatTools.requiresApproval(name: call.name, args: args)
+                let mcpRoute = IntegrationsStore.shared.assistantRoute(call.name)
+                let summary = mcpRoute.map { "\($0.server.name): \($0.tool.title ?? $0.tool.name)" }
+                    ?? AIChatTools.summary(name: call.name, args: args)
+                let changesThings = mcpRoute.map { !$0.tool.readOnly } ?? AIChatTools.requiresApproval(name: call.name, args: args)
                 let needsApproval = changesThings && !autoApprove
                 let item = AIChatItem(kind: .tool(name: call.name, summary: summary, status: needsApproval ? .awaitingApproval : .running, output: ""))
                 items.append(item)
@@ -632,7 +636,15 @@ public final class AIChatStore: ObservableObject {
                 }
 
                 let result: (output: String, ok: Bool)
-                if call.name == "open_pull_request", let number = args["number"] as? Int {
+                if let mcpRoute {
+                    do {
+                        let reply = try await IntegrationsStore.shared.call(server: mcpRoute.server.id, tool: mcpRoute.tool.name,
+                                                                                   arguments: AIChatTools.parse(call.arguments))
+                        result = (String(reply.text.prefix(30_000)), !reply.isError)
+                    } catch {
+                        result = ("\(mcpRoute.server.name) error: \(error.localizedDescription)", false)
+                    }
+                } else if call.name == "open_pull_request", let number = args["number"] as? Int {
                     if let state {
                         await state.openPullRequest(number: number)
                         result = ("Opened pull request #\(number) in GitXX.", true)
@@ -651,7 +663,7 @@ public final class AIChatStore: ObservableObject {
                 if Task.isCancelled { return }
                 update(item.id, status: result.ok ? .done : .failed, output: result.output)
                 wire.append(.tool(id: call.id, output: result.output))
-                if changesThings, result.ok, call.name != "open_pull_request", !AIAppActions.names.contains(call.name) {
+                if changesThings, result.ok, mcpRoute == nil, call.name != "open_pull_request", !AIAppActions.names.contains(call.name) {
                     state?.refreshAfterExternalChange()
                 }
             }

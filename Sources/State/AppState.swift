@@ -185,8 +185,13 @@ public final class AppState: ObservableObject {
 
     // Pull Requests View State
     @Published public var pullRequests: [PullRequest] = []
+    /// PR number being fetched for a link or palette jump; the PR tab shows a loading page for it instead of the list.
+    @Published public var openingPRNumber: Int?
+    /// PRs fetched one by one (not in any cached list), keyed "owner/repo#number", so reopening them is instant.
+    var fetchedPullRequests: [String: PullRequest] = [:]
     @Published public var selectedPR: PullRequest? {
         didSet {
+            if selectedPR != nil, openingPRNumber != nil { openingPRNumber = nil }
             if selectedPR?.number != oldValue?.number {
                 recordNavigationStep()
                 cancelPRDetailTasks()
@@ -735,10 +740,39 @@ public final class AppState: ObservableObject {
         NotificationCenter.default.addObserver(forName: NSNotification.Name("OpenRepoPathFromCLI"), object: nil, queue: .main) { [weak self] note in
             if let path = note.object as? String {
                 Task { @MainActor [weak self] in
-                    self?.requestOpenRepo(path: path)
+                    if path.hasPrefix("http://") || path.hasPrefix("https://"), let url = URL(string: path) {
+                        ExternalLinkInbox.receive(url)
+                    } else {
+                        self?.requestOpenRepo(path: path)
+                    }
                 }
             }
         }
+
+        NotificationCenter.default.addObserver(forName: ExternalLinkInbox.notification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.openExternalLinks() }
+        }
+        // Links that launched the app arrived before this state existed.
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            self?.openExternalLinks()
+        }
+    }
+
+    /// Opens queued web links: GitHub links go to the matching local repository's page, anything else to the browser.
+    func openExternalLinks() {
+        let links = ExternalLinkInbox.drain()
+        guard let url = links.last else { return }
+        LinkRouter.openInBrowser(Array(links.dropLast()))
+        guard let target = GitHubURLTarget.parse(url.absoluteString),
+              localRepository(owner: target.owner, repo: target.repo) != nil else {
+            LinkRouter.openInBrowser([url])
+            return
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        (WindowAccessor.mainWindow ?? NSApp.windows.first { $0.canBecomeMain })?.makeKeyAndOrderFront(nil)
+        showHome = false
+        openGitHubTarget(target)
     }
 
     func saveRecentRepos() {
@@ -944,6 +978,7 @@ public final class AppState: ObservableObject {
     func resetRepoScopedPRState() {
         stopPRPolling()
         selectedPR = nil
+        openingPRNumber = nil
         pullRequests = []
         prTabCounts = [:]
         prTimeline = []
@@ -1284,7 +1319,7 @@ public final class AppState: ObservableObject {
             showToast("No browser URL available for this page", type: .info)
             return
         }
-        NSWorkspace.shared.open(url)
+        LinkRouter.open(url)
         showToast("Opened in browser: \(url.lastPathComponent)", type: .info)
     }
 
@@ -2698,7 +2733,7 @@ public final class AppState: ObservableObject {
 
                 // Open browser verification page
                 if let url = URL(string: resp.verificationUri) {
-                    NSWorkspace.shared.open(url)
+                    LinkRouter.open(url)
                 }
 
                 self.showToast("User code '\(resp.userCode)' copied to clipboard! Authorize in browser.", type: .info)
@@ -3076,7 +3111,7 @@ public final class AppState: ObservableObject {
 
                     // Open browser
                     if let url = URL(string: deviceCodeInfo.verificationUri) {
-                        NSWorkspace.shared.open(url)
+                        LinkRouter.open(url)
                     }
 
                     self.showToast("Copied code \(deviceCodeInfo.userCode) to clipboard! Authorizing...", type: .info)

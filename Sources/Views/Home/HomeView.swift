@@ -179,9 +179,11 @@ private struct HomeRepositoriesView: View {
                         .frame(maxWidth: .infinity, minHeight: 120)
                 } else {
                     VStack(spacing: 0) {
+                        HomeRepositoryRow.header
+                        Divider()
                         ForEach(Array(repos.enumerated()), id: \.element.path) { index, repo in
                             HomeRepositoryRow(state: state, repo: repo, openPRs: openPRCount(repo))
-                            if index < repos.count - 1 { Divider().padding(.leading, 54) }
+                            if index < repos.count - 1 { Divider().padding(.leading, 12) }
                         }
                     }
                     .background(Color.primary.opacity(0.03))
@@ -213,78 +215,141 @@ private struct HomeRepositoriesView: View {
 }
 
 private struct HomeRepositoryRow: View {
+    /// Reads `HEAD` directly (no git process per row). Worktrees point `.git` at their real git dir;
+    /// a detached HEAD shows the short commit.
+    static func checkedOutBranch(_ path: String) async -> String? {
+        await Task.detached(priority: .utility) {
+            let dotGit = (path as NSString).appendingPathComponent(".git")
+            var gitDir = dotGit
+            if let pointer = try? String(contentsOfFile: dotGit, encoding: .utf8), pointer.hasPrefix("gitdir:") {
+                let target = pointer.dropFirst(7).trimmingCharacters(in: .whitespacesAndNewlines)
+                gitDir = target.hasPrefix("/") ? target : (path as NSString).appendingPathComponent(target)
+            }
+            guard let head = try? String(contentsOfFile: (gitDir as NSString).appendingPathComponent("HEAD"), encoding: .utf8)
+                .trimmingCharacters(in: .whitespacesAndNewlines) else { return nil }
+            if head.hasPrefix("ref: refs/heads/") { return String(head.dropFirst(16)) }
+            return head.count >= 7 ? String(head.prefix(7)) : nil
+        }.value
+    }
+
     @ObservedObject var state: AppState
     let repo: GitRepository
     let openPRs: Int
     @State private var hovered = false
+    @State private var branch: String?
 
-    private var slug: String? {
+    private var ownerAndName: (owner: String, name: String)? {
         guard let remote = repo.remoteUrl, remote.contains("github.com") else { return nil }
-        return state.gitHubService.parseRepoOwnerAndName(from: remote).map { "\($0.owner)/\($0.name)" }
+        return state.gitHubService.parseRepoOwnerAndName(from: remote).map { ($0.owner, $0.name) }
+    }
+
+    private var slug: String? { ownerAndName.map { "\($0.owner)/\($0.name)" } }
+    private var isCurrent: Bool { state.currentRepo?.path == repo.path }
+
+    // Fixed columns so each kind of value starts at the same x on every row and reads straight down the list.
+    fileprivate static let branchWidth: CGFloat = 230
+    fileprivate static let prsWidth: CGFloat = 72
+    fileprivate static let nameWidth: CGFloat = 230
+
+    static var header: some View {
+        HStack(spacing: 14) {
+            Text("Repository").frame(width: nameWidth, alignment: .leading)
+            Text("Branch").frame(width: branchWidth, alignment: .leading)
+            Text("Location").frame(maxWidth: .infinity, alignment: .leading)
+            Text("Open PRs").frame(width: prsWidth, alignment: .trailing)
+            Color.clear.frame(width: 10)
+        }
+        .font(.system(size: 10.5, weight: .semibold))
+        .textCase(.uppercase)
+        .foregroundStyle(.secondary)
+        .padding(.leading, 12)
+        .padding(.trailing, 12)
+        .frame(height: 28)
     }
 
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "book.closed.fill")
-                .font(.system(size: 15))
-                .foregroundStyle(.secondary)
-                .frame(width: 30, height: 30)
-                .background(Color.primary.opacity(0.07))
-                .clipShape(RoundedRectangle(cornerRadius: 7))
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 8) {
+        HStack(spacing: 14) {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
                     Text(repo.name)
-                        .font(.system(size: 13.5, weight: .semibold))
-                    if let slug {
-                        Text(slug)
-                            .font(.system(size: 11.5))
-                            .foregroundStyle(.secondary)
-                    }
-                    if state.currentRepo?.path == repo.path {
-                        Text("Current")
-                            .font(.system(size: 10, weight: .semibold))
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 1.5)
-                            .background(Color.primary.opacity(0.1))
-                            .clipShape(Capsule())
+                        .font(.system(size: 13, weight: .semibold))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    if isCurrent {
+                        Circle()
+                            .fill(state.accentTheme.primaryColor)
+                            .frame(width: 6, height: 6)
+                            .help("Open in GitXX now")
                     }
                 }
-                Text((repo.path as NSString).abbreviatingWithTildeInPath)
-                    .font(.system(size: 11.5, design: .monospaced))
+                Text(ownerAndName.map { $0.name.caseInsensitiveCompare(repo.name) == .orderedSame ? $0.owner : "\($0.owner)/\($0.name)" } ?? "Local only")
+                    .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                    .truncationMode(.middle)
             }
-            Spacer(minLength: 8)
-            if openPRs > 0, let slug {
-                Button {
-                    state.homeRepoFilter = slug
-                    state.homeTab = .pullRequests
-                } label: {
-                    HStack(spacing: 4) {
-                        PullRequestGlyph(size: 11, color: .green)
-                        Text("\(openPRs) open")
-                            .font(.system(size: 11.5, weight: .medium))
-                    }
-                    .padding(.horizontal, 8)
-                    .frame(height: 22)
-                    .background(Color.green.opacity(0.1))
-                    .clipShape(Capsule())
+            .frame(width: Self.nameWidth, alignment: .leading)
+
+            HStack(spacing: 5) {
+                if let shown = isCurrent ? state.currentBranch : branch {
+                    Image(systemName: "arrow.triangle.branch")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(state.accentTheme.primaryColor)
+                    Text(shown)
+                        .font(.system(size: 11.5, design: .monospaced))
+                        .foregroundStyle(.primary.opacity(0.85))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .help(shown)
                 }
-                .buttonStyle(.hoverPlain)
-                .help("Show your open pull requests in \(slug)")
             }
+            .frame(width: Self.branchWidth, alignment: .leading)
+
+            Text((repo.path as NSString).abbreviatingWithTildeInPath)
+                .font(.system(size: 11.5, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Group {
+                if openPRs > 0, let slug {
+                    Button {
+                        state.homeRepoFilter = slug
+                        state.homeTab = .pullRequests
+                    } label: {
+                        HStack(spacing: 4) {
+                            PullRequestGlyph(size: 11, color: .green)
+                            Text("\(openPRs)")
+                                .font(.system(size: 12, weight: .semibold).monospacedDigit())
+                                .foregroundStyle(.green)
+                        }
+                        .padding(.horizontal, 7)
+                        .frame(height: 22)
+                        .background(Color.green.opacity(0.1))
+                        .clipShape(Capsule())
+                    }
+                    .buttonStyle(.hoverPlain)
+                    .help("Show your open pull requests in \(slug)")
+                } else {
+                    Text("–").font(.system(size: 12)).foregroundStyle(.tertiary)
+                }
+            }
+            .frame(width: Self.prsWidth, alignment: .trailing)
+
             Image(systemName: "chevron.right")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.secondary.opacity(hovered ? 1 : 0.4))
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.secondary.opacity(hovered ? 1 : 0.35))
+                .frame(width: 10)
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.vertical, 8)
+        .background(isCurrent ? state.accentTheme.primaryColor.opacity(0.06) : Color.clear)
         .background(hovered ? Color.primary.opacity(0.05) : Color.clear)
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
         .pointerCursor()
         .onTapGesture { state.openRepoFromHome(repo) }
+        .task(id: repo.path) { branch = await Self.checkedOutBranch(repo.path) }
         .contextMenu {
             Button("Open") { state.openRepoFromHome(repo) }
             Button("Reveal in Finder") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: repo.path) }

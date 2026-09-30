@@ -476,7 +476,7 @@ public struct DiffViewer: View {
                 if let path = activeDiff?.path, let repoPath = state.currentRepo?.path {
                     Button {
                         let fullPath = (repoPath as NSString).appendingPathComponent(path)
-                        NSWorkspace.shared.open(URL(fileURLWithPath: fullPath))
+                        LinkRouter.open(URL(fileURLWithPath: fullPath))
                     } label: {
                         HStack(spacing: 5) {
                             Image(systemName: "arrow.up.forward.app")

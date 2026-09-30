@@ -273,6 +273,12 @@ public struct CommandPaletteView: View {
                 state.homeTab = .pullRequests
                 state.goHome()
             },
+            PaletteCommand(title: "Slack Review Requests", subtitle: "Integrations · PRs people asked you to review in Slack, with your review status", iconName: "person.2.badge.gearshape", shortcut: "⇧⌘L") {
+                IntegrationsWindowController.shared.show(.reviewRequests)
+            },
+            PaletteCommand(title: "Integrations & MCP Servers…", subtitle: "Connect Slack and other MCP servers for GitXX and the assistant", iconName: "point.3.connected.trianglepath.dotted", shortcut: nil) {
+                IntegrationsWindowController.shared.show(.servers)
+            },
             PaletteCommand(title: "Switch to Changes", subtitle: "View uncommitted local changes and diffs", iconName: "plus.forwardslash.minus", shortcut: "⌘1") {
                 state.activeTab = .changes
             },
@@ -544,7 +550,7 @@ public struct CommandPaletteView: View {
             })
         }
         items.append(PaletteCommand(title: "Open in browser", subtitle: isLocal ? target.url.absoluteString : "\(target.slug) isn't open locally · \(target.url.absoluteString)", iconName: "safari", shortcut: isLocal ? nil : "↩", section: "GitHub link") {
-            NSWorkspace.shared.open(target.url)
+            LinkRouter.open(target.url)
         })
         return items
     }

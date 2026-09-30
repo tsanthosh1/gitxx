@@ -870,7 +870,7 @@ public struct SettingsSheet: View {
 
                                     Button("Open GitHub Page") {
                                         if let url = URL(string: code.verificationUri) {
-                                            NSWorkspace.shared.open(url)
+                                            LinkRouter.open(url)
                                         }
                                     }
                                     .buttonStyle(.borderedProminent)
@@ -1883,7 +1883,7 @@ public struct SettingsSheet: View {
 
                             Button {
                                 if let url = URL(string: "https://github.com/settings/tokens/new?scopes=repo,read:org,workflow&description=GitXX") {
-                                    NSWorkspace.shared.open(url)
+                                    LinkRouter.open(url)
                                 }
                             } label: {
                                 HStack(spacing: 4) {
@@ -3118,7 +3118,7 @@ extension SettingsSheet {
 
     private var generalSettingsView: some View {
         VStack(alignment: .leading, spacing: 20) {
-            headerSection(title: "General", subtitle: "Menu bar, keyboard and command line")
+            headerSection(title: "General", subtitle: "Menu bar, keyboard, GitHub links and command line")
 
             settingsGroup("Menu bar") {
                 menuBarIconSection
@@ -3146,6 +3146,10 @@ extension SettingsSheet {
                     Button("Open Shortcuts") { selectedCategory = .shortcuts }
                         .buttonStyle(PRActionButtonStyle(.secondary, size: .compact))
                 }
+            }
+
+            settingsGroup("GitHub links") {
+                GitHubLinkRoutingSettings()
             }
 
             settingsGroup("Command line") {
