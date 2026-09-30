@@ -191,7 +191,7 @@ private struct ActionsRunHeader: View {
                 if !run.workflowPath.isEmpty, let slug = store.repoSlug {
                     Divider()
                     Button("View workflow file") {
-                        if let url = URL(string: "https://github.com/\(slug)/blob/\(run.headSha)/\(run.workflowPath)") { LinkRouter.open(url) }
+                        if let url = URL(string: "\(GitHubHost.web)/\(slug)/blob/\(run.headSha)/\(run.workflowPath)") { LinkRouter.open(url) }
                     }
                 }
             } label: {

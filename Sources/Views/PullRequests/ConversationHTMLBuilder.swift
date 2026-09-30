@@ -80,7 +80,7 @@ public enum ConversationHTMLBuilder {
     // MARK: - PR Description Card
 
     private static func renderPRDescription(pr: PullRequest, bag: MarkdownBag) -> String {
-        let avatarUrl = escapeAttr(pr.authorAvatarUrl ?? "https://github.com/\(pr.authorName).png?size=76")
+        let avatarUrl = escapeAttr(pr.authorAvatarUrl ?? "\(GitHubHost.web)/\(pr.authorName).png?size=76")
         let rawBody = pr.body.isEmpty ? "_No description provided._" : pr.body
         bag.add("body-desc", rawBody)
         bag.add("raw-desc", pr.body)
@@ -171,7 +171,7 @@ public enum ConversationHTMLBuilder {
     }
 
     private static func renderIssueComment(_ comment: PRComment, pr: PullRequest, bag: MarkdownBag) -> String {
-        let avatarUrl = escapeAttr(comment.authorAvatarUrl ?? "https://github.com/\(comment.authorName).png?size=76")
+        let avatarUrl = escapeAttr(comment.authorAvatarUrl ?? "\(GitHubHost.web)/\(comment.authorName).png?size=76")
         let bodyId = "body-comment-\(safeId(comment.id))"
         bag.add(bodyId, comment.body)
 
@@ -193,15 +193,35 @@ public enum ConversationHTMLBuilder {
       </div>
     </div>
     <div class="card-body markdown-body" id="\(bodyId)"></div>
+    \(reactionsBar(kind: "issue", id: comment.id, counts: comment.reactions))
   </div>
 </div>
 """
     }
 
+    /// Existing reactions as pills plus an add button with GitHub's eight emoji. Clicking toggles the viewer's
+    /// reaction. `kind` is "issue" for conversation comments, "review" for inline review comments.
+    private static func reactionsBar(kind: String, id: String, counts: [String: Int]?) -> String {
+        let counts = counts ?? [:]
+        func action(_ r: PRReaction) -> String {
+            "react('\(kind)', '\(escapeJS(id))', '\(r.rawValue)', this)"
+        }
+        let pills = PRReaction.allCases.compactMap { r -> String? in
+            guard let n = counts[r.rawValue], n > 0 else { return nil }
+            return "<button type=\"button\" class=\"rx-pill\" title=\"Toggle \(r.emoji)\" onclick=\"\(action(r))\">\(r.emoji)<span>\(n)</span></button>"
+        }.joined()
+        let picker = PRReaction.allCases.map {
+            "<button type=\"button\" class=\"rx-choice\" title=\"\($0.emoji)\" onclick=\"\(action($0))\">\($0.emoji)</button>"
+        }.joined()
+        return """
+        <div class="reactions">\(pills)<span class="rx-add"><button type="button" class="rx-add-btn" title="Add reaction" onclick="toggleRxPicker(event, this)">☺<span class="rx-plus">+</span></button><span class="rx-picker">\(picker)</span></span></div>
+        """
+    }
+
     // MARK: - Review Event
 
     private static func renderReviewEvent(_ review: PRReviewEvent, bag: MarkdownBag) -> String {
-        let avatarUrl = escapeAttr(review.authorAvatarUrl ?? "https://github.com/\(review.authorName).png?size=76")
+        let avatarUrl = escapeAttr(review.authorAvatarUrl ?? "\(GitHubHost.web)/\(review.authorName).png?size=76")
         let state = review.state.uppercased()
 
         let badgeIcon: String
@@ -282,7 +302,7 @@ public enum ConversationHTMLBuilder {
 
         var commentsHTML = ""
         for (i, c) in thread.comments.enumerated() {
-            let cAvatar = escapeAttr(c.authorAvatarUrl ?? "https://github.com/\(c.authorName).png?size=56")
+            let cAvatar = escapeAttr(c.authorAvatarUrl ?? "\(GitHubHost.web)/\(c.authorName).png?size=56")
             let bodyId = "thread-c-\(safeId(c.id))"
             bag.add(bodyId, c.body)
             commentsHTML += """
@@ -294,6 +314,7 @@ public enum ConversationHTMLBuilder {
                 <span class="header-text">\(formatDate(c.createdAt))</span>
               </div>
               <div class="thread-comment-body markdown-body" id="\(bodyId)"></div>
+              \(reactionsBar(kind: "review", id: c.id, counts: c.reactions))
             </div>
             """
         }
@@ -865,7 +886,7 @@ public enum ConversationHTMLBuilder {
     }
 
     private static func avatarImg(_ url: String, login: String, cls: String) -> String {
-        let fallback = escapeAttr("https://github.com/identicons/\(login).png")
+        let fallback = escapeAttr("\(GitHubHost.web)/identicons/\(login).png")
         return "<img class=\"\(cls)\" src=\"\(url)\" alt=\"\(escapeAttr(login))\" data-fallback=\"\(fallback)\" onerror=\"if(this.dataset.fallback){this.src=this.dataset.fallback;this.dataset.fallback='';}\">"
     }
 
@@ -1248,6 +1269,121 @@ public enum ConversationHTMLBuilder {
     var ta = document.getElementById("comment-new");
     if (ta) { ta.scrollIntoView({ behavior: "smooth", block: "center" }); ta.focus(); }
   }
+  // ---- @mention autocomplete ----
+  var mention = { ta: null, start: 0, query: "", items: [], index: 0, remote: {}, timer: null };
+  var mentionMenu = null;
+  function mentionEsc(t) { return String(t).replace(/[&<>"']/g, function (c) { return "&#" + c.charCodeAt(0) + ";"; }); }
+  function localPeople() {
+    var seen = {}, out = [];
+    document.querySelectorAll(".author-name").forEach(function (el) {
+      var login = (el.textContent || "").trim();
+      if (login && !seen[login.toLowerCase()]) { seen[login.toLowerCase()] = 1; out.push({ login: login, name: "", avatar: "" }); }
+    });
+    return out;
+  }
+  function mentionContext(ta) {
+    var upto = ta.value.slice(0, ta.selectionStart);
+    var m = /(^|[\s(])@([A-Za-z0-9-]{0,39})$/.exec(upto);
+    return m ? { start: upto.length - m[2].length, query: m[2] } : null;
+  }
+  function closeMentions() {
+    mention.ta = null; mention.items = [];
+    if (mentionMenu) mentionMenu.style.display = "none";
+  }
+  function renderMentions() {
+    var q = mention.query.toLowerCase();
+    var seen = {}, items = [];
+    function add(u) {
+      var key = u.login.toLowerCase();
+      if (seen[key]) return;
+      if (q && key.indexOf(q) !== 0 && (u.name || "").toLowerCase().indexOf(q) === -1) return;
+      seen[key] = 1; items.push(u);
+    }
+    localPeople().forEach(add);
+    (mention.remote[q] || []).forEach(add);
+    mention.items = items.slice(0, 8);
+    if (!mention.items.length) { if (mentionMenu) mentionMenu.style.display = "none"; return; }
+    if (mention.index >= mention.items.length) mention.index = 0;
+    if (!mentionMenu) {
+      mentionMenu = document.createElement("div");
+      mentionMenu.className = "mention-menu";
+      mentionMenu.addEventListener("mousedown", function (e) {
+        var row = e.target.closest(".mention-row");
+        if (!row) return;
+        e.preventDefault();
+        pickMention(parseInt(row.getAttribute("data-i"), 10));
+      });
+      document.body.appendChild(mentionMenu);
+    }
+    mentionMenu.innerHTML = mention.items.map(function (u, i) {
+      var avatar = u.avatar || ("https://github.com/" + encodeURIComponent(u.login) + ".png?size=40");
+      return '<div class="mention-row' + (i === mention.index ? ' active' : '') + '" data-i="' + i + '">' +
+        '<img src="' + mentionEsc(avatar) + '"><strong>' + mentionEsc(u.login) + '</strong>' +
+        (u.name ? '<span>' + mentionEsc(u.name) + '</span>' : '') + '</div>';
+    }).join("");
+    var r = mention.ta.getBoundingClientRect();
+    mentionMenu.style.left = (r.left + window.scrollX + 8) + "px";
+    mentionMenu.style.top = (r.bottom + window.scrollY + 4) + "px";
+    mentionMenu.style.display = "block";
+  }
+  function pickMention(i) {
+    var u = mention.items[i], ta = mention.ta;
+    if (!u || !ta) return;
+    var before = ta.value.slice(0, mention.start), after = ta.value.slice(ta.selectionStart);
+    ta.value = before + u.login + " " + after;
+    var pos = before.length + u.login.length + 1;
+    ta.setSelectionRange(pos, pos);
+    ta.dispatchEvent(new Event("input", { bubbles: true }));
+    closeMentions();
+    ta.focus();
+  }
+  window.gitxxMentions = function (query, users) {
+    mention.remote[query.toLowerCase()] = users;
+    if (mention.ta && mention.query.toLowerCase() === query.toLowerCase()) renderMentions();
+  };
+  document.addEventListener("input", function (e) {
+    var ta = e.target;
+    if (!ta || ta.tagName !== "TEXTAREA") return;
+    var ctx = mentionContext(ta);
+    if (!ctx) { if (mention.ta === ta) closeMentions(); return; }
+    var changed = mention.ta !== ta || mention.query !== ctx.query;
+    mention.ta = ta; mention.start = ctx.start; mention.query = ctx.query;
+    if (changed) mention.index = 0;
+    renderMentions();
+    var q = ctx.query.toLowerCase();
+    if (q && !mention.remote[q]) {
+      clearTimeout(mention.timer);
+      mention.timer = setTimeout(function () { post({ action: "mentionSearch", q: ctx.query }); }, 180);
+    }
+  });
+  document.addEventListener("keydown", function (e) {
+    if (!mention.ta || e.target !== mention.ta || !mention.items.length || !mentionMenu || mentionMenu.style.display === "none") return;
+    var n = mention.items.length;
+    if (e.key === "ArrowDown") mention.index = (mention.index + 1) % n;
+    else if (e.key === "ArrowUp") mention.index = (mention.index + n - 1) % n;
+    else if ((e.key === "Enter" && !e.metaKey && !e.ctrlKey) || e.key === "Tab") { pickMention(mention.index); }
+    else if (e.key === "Escape") closeMentions();
+    else return;
+    e.preventDefault(); e.stopPropagation();
+    if (mention.ta) renderMentions();
+  }, true);
+  document.addEventListener("focusout", function (e) { if (e.target === mention.ta) setTimeout(closeMentions, 120); });
+
+  window.react = function (kind, id, content, el) {
+    closeRxPickers();
+    sendAction({ action: "react", kind: kind, id: id, content: content }, "react-" + kind + "-" + id + "-" + content, el);
+  };
+  function closeRxPickers() {
+    document.querySelectorAll(".rx-add.open").forEach(function (p) { p.classList.remove("open"); });
+  }
+  window.toggleRxPicker = function (ev, btn) {
+    ev.stopPropagation();
+    var wrap = btn.parentElement;
+    var wasOpen = wrap.classList.contains("open");
+    closeRxPickers();
+    if (!wasOpen) wrap.classList.add("open");
+  };
+  document.addEventListener("click", closeRxPickers);
   window.quoteReply = function (bodyId, author) {
     var sel = window.getSelection ? String(window.getSelection()) : "";
     var target = document.getElementById(bodyId);
@@ -1834,6 +1970,40 @@ html { padding-top: var(--gitxx-top-inset, 0px); scroll-padding-top: calc(var(--
 .merge-method-select { min-height: 34px; padding: 6px 10px; font-size: 13px; border-radius: 7px; }
 .btn-link { font-size: 12.5px; padding: 4px 6px; border-radius: 6px; }
 .btn-link:hover { background: rgba(88, 166, 255, 0.1); text-decoration: none; }
+.mention-menu {
+  display: none; position: absolute; z-index: 50; min-width: 240px; max-width: 360px; padding: 4px;
+  background: #161b22; border: 1px solid rgba(240,246,252,0.14); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+}
+.mention-row { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+.mention-row img { width: 20px; height: 20px; border-radius: 50%; }
+.mention-row strong { color: var(--color-fg-default); font-weight: 600; }
+.mention-row span { color: var(--color-fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mention-row.active, .mention-row:hover { background: rgba(56,139,253,0.18); }
+.reactions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 0 16px 12px; }
+.thread-comment .reactions { padding: 6px 0 2px 30px; }
+.rx-pill {
+  display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 8px; border-radius: 12px;
+  font-size: 13px; background: rgba(56,139,253,0.10); border: 1px solid rgba(56,139,253,0.35); color: var(--color-fg-default);
+  cursor: pointer;
+}
+.rx-pill span { font-size: 12px; font-weight: 600; color: #79c0ff; }
+.rx-pill:hover { background: rgba(56,139,253,0.2); }
+.rx-pill[disabled], .rx-choice[disabled] { opacity: 0.5; cursor: default; }
+.rx-add { position: relative; display: inline-flex; }
+.rx-add-btn {
+  display: inline-flex; align-items: center; height: 24px; padding: 0 7px; border-radius: 12px; font-size: 14px;
+  background: none; border: 1px solid rgba(240,246,252,0.10); color: var(--color-fg-muted); cursor: pointer; opacity: 0.55;
+}
+.rx-plus { font-size: 10px; font-weight: 700; margin-left: 1px; }
+.card:hover .rx-add-btn, .thread-comment:hover .rx-add-btn, .rx-add.open .rx-add-btn { opacity: 1; }
+.rx-add-btn:hover { background: rgba(110,118,129,0.18); color: var(--color-fg-default); }
+.rx-picker {
+  display: none; position: absolute; bottom: 30px; left: 0; z-index: 20; padding: 4px; gap: 2px; white-space: nowrap;
+  background: #161b22; border: 1px solid rgba(240,246,252,0.14); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+}
+.rx-add.open .rx-picker { display: flex; }
+.rx-choice { width: 30px; height: 30px; font-size: 16px; border: none; background: none; border-radius: 6px; cursor: pointer; }
+.rx-choice:hover { background: rgba(110,118,129,0.25); transform: scale(1.15); }
 .icon-btn {
   background: none; border: 1px solid transparent; color: var(--color-fg-muted);
   width: 26px; height: 26px; border-radius: 6px; cursor: pointer; font-size: 14px; margin-left: 4px;

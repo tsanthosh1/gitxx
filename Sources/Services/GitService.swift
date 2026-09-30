@@ -141,6 +141,32 @@ public actor GitService {
         }
     }
 
+    /// Raw bytes of `path` at `revision` (`""` reads the index), or nil if it doesn't exist there.
+    public nonisolated func blobData(revision: String, path: String, in directory: String) async -> Data? {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+                process.arguments = ["show", "\(revision):\(path)"]
+                process.currentDirectoryURL = URL(fileURLWithPath: directory)
+                var environment = ProcessInfo.processInfo.environment
+                environment["GIT_OPTIONAL_LOCKS"] = "0"
+                process.environment = environment
+                let pipe = Pipe()
+                process.standardOutput = pipe
+                process.standardError = FileHandle.nullDevice
+                do {
+                    try process.run()
+                    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                    process.waitUntilExit()
+                    continuation.resume(returning: process.terminationStatus == 0 ? data : nil)
+                } catch {
+                    continuation.resume(returning: nil)
+                }
+            }
+        }
+    }
+
     public nonisolated func executeShell(command: String, in directory: String, shell: TerminalShell = .bash) async throws -> GitResult {
         return try await withCheckedThrowingContinuation { continuation in
             let process = Process()
@@ -378,7 +404,7 @@ public actor GitService {
         }
 
         let lower = targetPath.lowercased()
-        let isKnownBinary = lower.hasSuffix(".ds_store") || lower.hasSuffix(".png") || lower.hasSuffix(".jpg") || lower.hasSuffix(".pyc") || lower.hasSuffix(".zip") || lower.hasSuffix(".pdf") || diffOutput.contains("Binary files differ") || diffOutput.contains("GIT binary patch")
+        let isKnownBinary = lower.hasSuffix(".ds_store") || ImageDiffSources.isImage(lower) || lower.hasSuffix(".pyc") || lower.hasSuffix(".zip") || lower.hasSuffix(".pdf") || diffOutput.contains("Binary files differ") || diffOutput.contains("GIT binary patch")
 
         var result = FileDiff(
             path: targetPath,

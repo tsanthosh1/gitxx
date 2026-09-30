@@ -79,6 +79,24 @@ public enum ReviewVerdict: String, Codable, Sendable {
     }
 }
 
+/// GitHub's reaction set, in GitHub's picker order.
+public enum PRReaction: String, CaseIterable, Sendable {
+    case thumbsUp = "+1", thumbsDown = "-1", laugh, hooray, confused, heart, rocket, eyes
+
+    public var emoji: String {
+        switch self {
+        case .thumbsUp: return "👍"
+        case .thumbsDown: return "👎"
+        case .laugh: return "😄"
+        case .hooray: return "🎉"
+        case .confused: return "😕"
+        case .heart: return "❤️"
+        case .rocket: return "🚀"
+        case .eyes: return "👀"
+        }
+    }
+}
+
 public struct PRComment: Identifiable, Hashable, Codable, Sendable {
     public let id: String
     public let authorName: String
@@ -87,6 +105,8 @@ public struct PRComment: Identifiable, Hashable, Codable, Sendable {
     public let createdAt: Date
     public let path: String?
     public let lineNumber: Int?
+    /// Reaction counts keyed by `PRReaction` raw value; nil when not loaded.
+    public var reactions: [String: Int]? = nil
 
     public init(id: String = UUID().uuidString, authorName: String, authorAvatarUrl: String? = nil, body: String, createdAt: Date = Date(), path: String? = nil, lineNumber: Int? = nil) {
         self.id = id
@@ -117,6 +137,8 @@ public struct PRReviewComment: Identifiable, Hashable, Codable, Sendable {
     public let htmlUrl: String?
     /// Diff side the comment is anchored to: "RIGHT" (new file) or "LEFT" (old file).
     public let side: String?
+    /// Reaction counts keyed by `PRReaction` raw value; nil when not loaded.
+    public var reactions: [String: Int]? = nil
 
     public init(
         id: String,
@@ -325,6 +347,48 @@ public enum PRTimelineItem: Identifiable, Hashable, Codable, Sendable {
     }
 }
 
+/// A reviewer on a list row: requested (no review yet) or their latest review state.
+public struct PRListReviewer: Hashable, Codable, Sendable {
+    public enum Status: String, Codable, Sendable { case requested, approved, changesRequested, commented }
+    public let login: String
+    public let avatarUrl: String?
+    public let status: Status
+}
+
+/// Size bucket by changed lines (additions + deletions), using the common XS/S/M/L/XL thresholds.
+public enum PRSize: String, Sendable {
+    case xs = "XS", s = "S", m = "M", l = "L", xl = "XL"
+
+    public init(changedLines: Int) {
+        switch changedLines {
+        case ..<10: self = .xs
+        case ..<100: self = .s
+        case ..<500: self = .m
+        case ..<1000: self = .l
+        default: self = .xl
+        }
+    }
+
+    public var color: Color {
+        switch self {
+        case .xs, .s: return .green
+        case .m: return .yellow
+        case .l: return .orange
+        case .xl: return .red
+        }
+    }
+
+    public var rangeText: String {
+        switch self {
+        case .xs: return "under 10 changed lines"
+        case .s: return "10–99 changed lines"
+        case .m: return "100–499 changed lines"
+        case .l: return "500–999 changed lines"
+        case .xl: return "1,000+ changed lines"
+        }
+    }
+}
+
 public struct PullRequest: Identifiable, Hashable, Codable, Sendable {
     public var id: Int { number }
     public let number: Int
@@ -351,6 +415,11 @@ public struct PullRequest: Identifiable, Hashable, Codable, Sendable {
     public var mergeable: Bool?
     public var mergeableState: String? // "clean", "blocked", "dirty", "unstable", "behind", "draft"
     public var rebaseable: Bool?
+    /// From the list query; nil in caches written before labels and reviewers were fetched.
+    public var labels: [PRLabel]? = nil
+    public var reviewers: [PRListReviewer]? = nil
+
+    public var size: PRSize { PRSize(changedLines: additions + deletions) }
 
     public var checksSummary: String? {
         guard totalChecksCount > 0 else { return nil }

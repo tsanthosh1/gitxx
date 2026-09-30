@@ -63,6 +63,7 @@ public enum PreferenceCategory: String, CaseIterable, Identifiable {
 
 public struct SettingsSheet: View {
     @AppStorage(MenuBarController.enabledKey) private var menuBarIcon = false
+    @AppStorage(GitHubNotifier.enabledKey) private var systemNotifications = true
     @AppStorage(KeyboardNavigation.fullAccessKey) private var fullKeyboardNavigation = true
     @State private var fullKeyboardNavigationAtLaunch = KeyboardNavigation.fullAccessEnabled
     @AppStorage(SurfaceStyle.intensityKey) private var surfaceIntensity = SurfaceStyle.Intensity.subtle.rawValue
@@ -73,6 +74,7 @@ public struct SettingsSheet: View {
     @State private var selectedCategory: PreferenceCategory = .general
     @State private var hoveredCategory: PreferenceCategory? = nil
     @State private var tokenInput: String = ""
+    @State private var enterpriseHostInput: String = UserDefaults.standard.string(forKey: GitHubHost.enterpriseHostKey) ?? ""
     @State private var showPATSection: Bool = false
     @State private var testCommandInput: String = "gs"
     @State private var testCommandResult: String = ""
@@ -1882,7 +1884,7 @@ public struct SettingsSheet: View {
                             }
 
                             Button {
-                                if let url = URL(string: "https://github.com/settings/tokens/new?scopes=repo,read:org,workflow&description=GitXX") {
+                                if let url = URL(string: "\(GitHubHost.web)/settings/tokens/new?scopes=repo,read:org,workflow&description=GitXX") {
                                     LinkRouter.open(url)
                                 }
                             } label: {
@@ -1913,8 +1915,124 @@ public struct SettingsSheet: View {
                     RoundedRectangle(cornerRadius: 8)
                         .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
                 )
+
+                gitHubAccountsSection
+
+                enterpriseHostSection
             }
         }
+    }
+
+    private var gitHubAccountsSection: some View {
+        let active = state.activeGitHubAccount
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "person.2")
+                    .font(.system(size: 11))
+                Text("Accounts")
+                    .font(.system(size: 11.5, weight: .semibold))
+                Spacer()
+            }
+            if state.gitHubAccounts.isEmpty {
+                Text("Every account you sign in with is remembered here, so you can switch between work and personal accounts without signing in again.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                ForEach(state.gitHubAccounts) { account in
+                    HStack(spacing: 10) {
+                        AsyncImage(url: URL(string: account.host == "github.com"
+                                            ? "https://github.com/\(account.login).png?size=48"
+                                            : "https://\(account.host)/\(account.login).png?size=48")) { image in
+                            image.resizable()
+                        } placeholder: {
+                            Image(systemName: "person.crop.circle.fill").resizable().foregroundStyle(.secondary)
+                        }
+                        .frame(width: 22, height: 22)
+                        .clipShape(Circle())
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("@\(account.login)")
+                                .font(.system(size: 12, weight: .semibold))
+                            Text("\(account.host) · \(account.method.rawValue)")
+                                .font(.system(size: 10.5))
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        if account == active {
+                            Label("Active", systemImage: "checkmark.circle.fill")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(.green)
+                        } else {
+                            Button("Switch") { state.switchGitHubAccount(account) }
+                                .controlSize(.small)
+                            Button {
+                                state.removeGitHubAccount(account)
+                            } label: {
+                                Image(systemName: "trash")
+                            }
+                            .buttonStyle(.hoverPlain)
+                            .help("Forget this account and delete its saved token")
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+                Text("To add another account, sign in with it above; the current one stays in this list.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(12)
+        .background(Color(NSColor.controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+        )
+    }
+
+    private var enterpriseHostSection: some View {
+        let saved = GitHubHost.normalize(UserDefaults.standard.string(forKey: GitHubHost.enterpriseHostKey) ?? "")
+        let pending = GitHubHost.normalize(enterpriseHostInput)
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "building.2")
+                    .font(.system(size: 11))
+                Text("GitHub Enterprise Server")
+                    .font(.system(size: 11.5, weight: .semibold))
+                Spacer()
+                Text(saved.map { "Using \($0)" } ?? "Using github.com")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.secondary)
+            }
+            Text("Leave empty for github.com. For an Enterprise Server, enter its host (for example github.corp.com); GitXX then uses https://host/api/v3 and https://host/api/graphql. Sign in with a Personal Access Token from that server — browser sign-in and Copilot only work with github.com.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                TextField("github.corp.com", text: $enterpriseHostInput)
+                    .textFieldStyle(.roundedBorder)
+                Button(pending == nil && !enterpriseHostInput.isEmpty ? "Invalid host" : "Apply") {
+                    if let pending {
+                        UserDefaults.standard.set(pending, forKey: GitHubHost.enterpriseHostKey)
+                        enterpriseHostInput = pending
+                    } else {
+                        UserDefaults.standard.removeObject(forKey: GitHubHost.enterpriseHostKey)
+                        enterpriseHostInput = ""
+                    }
+                    state.detectedCLIToken = nil
+                    state.refreshRepo()
+                    state.showToast("GitHub host set to \(GitHubHost.host)", type: .success)
+                }
+                .disabled(pending == saved || (pending == nil && !enterpriseHostInput.trimmingCharacters(in: .whitespaces).isEmpty))
+            }
+        }
+        .padding(12)
+        .background(Color(NSColor.controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+        )
     }
 
     // MARK: - API Activity Log Helpers
@@ -3124,6 +3242,10 @@ extension SettingsSheet {
                 menuBarIconSection
             }
 
+            settingsGroup("Notifications") {
+                notificationsSection
+            }
+
             settingsGroup("Keyboard") {
                 settingsRow(icon: "arrow.right.to.line", title: "Tab moves between all controls",
                             detail: "Tab and ⇧Tab reach every button, checkbox and chip (not just text fields), and Space or Return presses the focused one. Takes effect when GitXX relaunches.") {
@@ -3194,6 +3316,27 @@ extension SettingsSheet {
             }
             Spacer(minLength: 8)
             trailing()
+        }
+    }
+
+    var notificationsSection: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: "bell.badge")
+                .font(.system(size: 18))
+                .foregroundStyle(.secondary)
+                .frame(width: 28, height: 28)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("macOS notifications")
+                    .font(.system(size: 12.5, weight: .semibold))
+                Text("Notifies you when someone requests your review, or when checks fail on the latest commit of one of your open pull requests. GitXX checks GitHub every 3 minutes; clicking a notification opens the pull request.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            Toggle("", isOn: $systemNotifications)
+                .toggleStyle(.switch)
+                .labelsHidden()
         }
     }
 

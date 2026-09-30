@@ -1,0 +1,77 @@
+name: Package & Release
+
+on:
+  push:
+    branches: ["**"]
+    tags-ignore: ["**"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-15
+    env:
+      VERSION: 1.0.${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode (Swift 6.1+)
+        run: |
+          xcode=$(ls -d /Applications/Xcode_16*.app | sort -V | tail -1)
+          echo "Using $xcode"
+          sudo xcode-select -s "$xcode/Contents/Developer"
+          swift --version
+
+      - name: Cache SwiftPM build
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: spm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Package.swift', 'Package.resolved') }}-${{ github.sha }}
+          restore-keys: |
+            spm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Package.swift', 'Package.resolved') }}-
+
+      - name: Build and package GitXX.app
+        run: GITXX_VERSION="$VERSION" GITXX_BUILD="${{ github.run_number }}" ./package-app.sh
+
+      - name: Ad-hoc sign
+        run: |
+          codesign --force --deep --sign - GitXX.app
+          codesign --verify --verbose GitXX.app
+
+      - name: Create archives
+        run: |
+          mkdir -p dist
+          ditto -c -k --keepParent GitXX.app "dist/GitXX-$VERSION-macos-arm64.zip"
+          (cd browser-extension && zip -qr "../dist/GitXX-Links-chrome-extension-$VERSION.zip" chrome native-host)
+          (cd dist && shasum -a 256 *.zip > SHA256SUMS.txt)
+          ls -l dist
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GitXX-${{ env.VERSION }}
+          path: dist/*
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          flags=(--latest)
+          if [ "$BRANCH" != "${{ github.event.repository.default_branch }}" ]; then
+            flags=(--prerelease --latest=false)
+          fi
+          notes=$(printf 'Build %s from `%s` (%s).\n\nUnsigned (ad-hoc) build: after unzipping, run `xattr -dr com.apple.quarantine GitXX.app` or right-click › Open the first time.' \
+            "${{ github.run_number }}" "$BRANCH" "${GITHUB_SHA::7}")
+          gh release create "v$VERSION" dist/* \
+            --target "$GITHUB_SHA" \
+            --title "GitXX $VERSION${BRANCH:+ ($BRANCH)}" \
+            --notes "$notes" \
+            --generate-notes \
+            "${flags[@]}"

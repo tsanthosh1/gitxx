@@ -25,9 +25,10 @@ public struct GitHubURLTarget: Equatable, Sendable {
     public static func parse(_ raw: String) -> GitHubURLTarget? {
         var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.contains(" ") else { return nil }
-        if text.hasPrefix("github.com/") || text.hasPrefix("www.github.com/") { text = "https://" + text }
-        guard let url = URL(string: text), let host = url.host?.lowercased(),
-              host == "github.com" || host == "www.github.com" else { return nil }
+        if !text.contains("://"), let first = text.split(separator: "/").first, GitHubHost.isWebHost(String(first)) {
+            text = "https://" + text
+        }
+        guard let url = URL(string: text), let host = url.host?.lowercased(), GitHubHost.isWebHost(host) else { return nil }
         let parts = url.pathComponents.filter { $0 != "/" }
         guard parts.count >= 2 else { return nil }
         let owner = parts[0]

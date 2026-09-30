@@ -20,7 +20,7 @@ final class CommitAvatarResolver: ObservableObject {
         let email = commit.authorEmail.trimmingCharacters(in: .whitespaces).lowercased()
         guard !email.isEmpty else { return nil }
         if let login = Self.localLogin(email: email, profiles: state.gitProfiles) {
-            return "https://github.com/\(login).png?size=64"
+            return "\(GitHubHost.web)/\(login).png?size=64"
         }
         if let cached = avatarURLs[email] {
             return cached.isEmpty ? nil : cached

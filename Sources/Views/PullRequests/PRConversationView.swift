@@ -94,7 +94,8 @@ public struct PRConversationView: View {
                         onNavPanelOpened: {
                             state.prNavPanelRequested = false
                         },
-                        headCheckedOut: state.currentRepo != nil && pr.headBranch == state.currentBranch
+                        headCheckedOut: state.currentRepo != nil && pr.headBranch == state.currentBranch,
+                        onMentionSearch: { query in await state.searchMentionableUsers(query) }
                     )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }

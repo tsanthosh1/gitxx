@@ -4,7 +4,7 @@ import Foundation
 
 extension GitHubAPIService {
 
-    private static let graphQLEndpoint = URL(string: "https://api.github.com/graphql")!
+    static var graphQLEndpoint: URL { GitHubHost.graphQL }
 
     // MARK: Transport helpers
 
@@ -20,7 +20,7 @@ extension GitHubAPIService {
         guard let token = token?.trimmingCharacters(in: .whitespacesAndNewlines), !token.isEmpty else {
             throw NSError(domain: "GitHubAPI", code: 401, userInfo: [NSLocalizedDescriptionKey: "No GitHub token configured."])
         }
-        let urlString = path.hasPrefix("http") ? path : "https://api.github.com\(path)"
+        let urlString = path.hasPrefix("http") ? path : "\(GitHubHost.api)\(path)"
         guard let url = URL(string: urlString) else {
             throw NSError(domain: "GitHubAPI", code: 400, userInfo: [NSLocalizedDescriptionKey: "Invalid URL: \(urlString)"])
         }
@@ -383,7 +383,7 @@ extension GitHubAPIService {
 
     public func fetchRepoLabels(owner: String, repo: String, token: String?) async throws -> [PRLabel] {
         guard let token = token?.trimmingCharacters(in: .whitespacesAndNewlines), !token.isEmpty,
-              let url = URL(string: "https://api.github.com/repos/\(owner)/\(repo)/labels?per_page=100") else { return [] }
+              let url = URL(string: "\(GitHubHost.api)/repos/\(owner)/\(repo)/labels?per_page=100") else { return [] }
         let data = try await sendREST(method: "GET", path: url.absoluteString, token: token, actionName: "Load labels")
         let array = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] ?? []
         return array.compactMap {
@@ -491,7 +491,7 @@ extension GitHubAPIService {
     // MARK: Cache invalidation
 
     public func invalidateTimelineCaches(owner: String, repo: String, prNumber: Int) async {
-        let base = "https://api.github.com/repos/\(owner)/\(repo)"
+        let base = "\(GitHubHost.api)/repos/\(owner)/\(repo)"
         for suffix in [
             "/issues/\(prNumber)/comments?per_page=100",
             "/pulls/\(prNumber)/reviews?per_page=100",
@@ -503,7 +503,7 @@ extension GitHubAPIService {
     }
 
     public func invalidateChecksCache(owner: String, repo: String, headSha: String) async {
-        let base = "https://api.github.com/repos/\(owner)/\(repo)/commits/\(headSha)"
+        let base = "\(GitHubHost.api)/repos/\(owner)/\(repo)/commits/\(headSha)"
         await GitHubHTTPCache.shared.remove(for: "\(base)/check-runs?per_page=50")
         await GitHubHTTPCache.shared.remove(for: "\(base)/status")
     }

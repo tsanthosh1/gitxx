@@ -139,6 +139,16 @@ struct PRDetailHeaderView: View {
             copyBranchButton
             if showStats {
                 HStack(spacing: 5) {
+                    if pr.additions + pr.deletions > 0 {
+                        Text(pr.size.rawValue)
+                            .font(.system(size: 9.5, weight: .bold))
+                            .foregroundStyle(pr.size.color)
+                            .padding(.horizontal, 4)
+                            .frame(height: 16)
+                            .background(pr.size.color.opacity(0.14))
+                            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                            .help("Size \(pr.size.rawValue): \(pr.size.rangeText)")
+                    }
                     Text("+\(pr.additions.formatted())").foregroundStyle(.green)
                     Text("−\(pr.deletions.formatted())").foregroundStyle(.red)
                 }

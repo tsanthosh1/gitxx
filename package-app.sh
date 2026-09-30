@@ -6,6 +6,8 @@ BUNDLE_DIR="$APP_NAME.app"
 CONTENTS_DIR="$BUNDLE_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
+VERSION="${GITXX_VERSION:-1.0.0}"
+BUILD_NUMBER="${GITXX_BUILD:-1}"
 
 echo "🔨 Building $APP_NAME for macOS..."
 swift build -c release
@@ -55,9 +57,9 @@ cat <<EOF > "$CONTENTS_DIR/Info.plist"
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0.0</string>
+    <string>$VERSION</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>$BUILD_NUMBER</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>NSHighResolutionCapable</key>
@@ -87,10 +89,12 @@ EOF
 # Create PkgInfo
 echo "APPL????" > "$CONTENTS_DIR/PkgInfo"
 
-# Install symlink to ~/.local/bin/gitxx for instant terminal access
-mkdir -p "$HOME/.local/bin"
-ln -sf "$(pwd)/bin/gitxx" "$HOME/.local/bin/gitxx"
-echo "🔗 Created CLI symlink at $HOME/.local/bin/gitxx"
+# Install symlink to ~/.local/bin/gitxx for instant terminal access (not on CI runners)
+if [ -z "$CI" ]; then
+    mkdir -p "$HOME/.local/bin"
+    ln -sf "$(pwd)/bin/gitxx" "$HOME/.local/bin/gitxx"
+    echo "🔗 Created CLI symlink at $HOME/.local/bin/gitxx"
+fi
 
 echo "✅ Successfully created $BUNDLE_DIR!"
 echo "🚀 To launch the app, run: open $BUNDLE_DIR"

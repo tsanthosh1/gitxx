@@ -276,10 +276,13 @@ public final class AppState: ObservableObject {
     @Published public var prThreadFilter: PRConversationView.ResolvedFilter = .all
     /// Author filter on the PR list; `nil` means everyone.
     @Published public var prAuthorFilter: String? = nil
+    /// Label the PR list is narrowed to (server-side `label:` qualifier).
+    @Published public var prLabelFilter: String? = nil
     /// Total matches for the list as currently queried (tab plus author), for the "Showing N of M" label.
     @Published public var prListTotalCount: Int?
     /// Login of the authenticated GitHub user (from `GET /user`), cached across launches.
     @Published public var gitHubViewerLogin: String? = UserDefaults.standard.string(forKey: "gitxx_github_viewer_login")
+    @Published public var gitHubAccounts: [GitHubAccount] = GitHubAccount.loadAll()
     /// "filename@patchHash" keys of files marked as viewed for the selected PR.
     @Published public var prViewedFiles: Set<String> = []
     @Published public var prLastRefreshedAt: Date? = nil
@@ -527,6 +530,9 @@ public final class AppState: ObservableObject {
     @Published public var terminalInput: String = ""
     public var terminalCommandHistory: [String] = []
     public var terminalHistoryIndex: Int = -1
+    /// Every terminal tab; the active one's live data is in `terminalEntries` / `terminalInput` / history above.
+    @Published public var terminalSessions: [TerminalSession] = [TerminalSession(number: 1)]
+    @Published public var activeTerminalSessionID: UUID? = nil
 
     // Native Git CLI Execution State
     public struct TerminalExecutionResult: Identifiable {
@@ -825,6 +831,8 @@ public final class AppState: ObservableObject {
             }
         }
 
+        GitHubNotifier.shared.start { [weak self] in self?.effectiveGitHubToken }
+
         // 3. Periodic Background Remote Fetch Timer (Every 60 seconds)
         periodicFetchTimer?.invalidate()
         periodicFetchTimer = Timer.scheduledTimer(withTimeInterval: 60.0, repeats: true) { [weak self] _ in
@@ -919,6 +927,16 @@ public final class AppState: ObservableObject {
         return author
     }
 
+    /// Only unfiltered lists are cached (and give the tab counts).
+    var prListUsesCache: Bool { prListAuthorQualifier == nil && prLabelFilter == nil }
+
+    public func setPRLabelFilter(_ label: String?) {
+        guard prLabelFilter != label else { return }
+        prLabelFilter = label
+        pullRequests = []
+        loadPRs()
+    }
+
     /// Picks an author, moving between "My …" and the general tabs so the list query stays consistent.
     public func setPRAuthorFilter(_ login: String?) {
         let me = gitHubViewerLogin
@@ -970,6 +988,7 @@ public final class AppState: ObservableObject {
             guard let login = result.username else { return }
             self.gitHubViewerLogin = login
             UserDefaults.standard.set(login, forKey: "gitxx_github_viewer_login")
+            self.rememberGitHubAccount(login: login, token: token, method: self.githubToken == nil ? .cli : self.authMethod)
             if self.prFilter == .myOpen || self.prFilter == .myClosed { self.prAuthorFilter = login }
         }
     }
@@ -979,6 +998,7 @@ public final class AppState: ObservableObject {
         stopPRPolling()
         selectedPR = nil
         openingPRNumber = nil
+        prLabelFilter = nil
         pullRequests = []
         prTabCounts = [:]
         prTimeline = []
@@ -1261,7 +1281,7 @@ public final class AppState: ObservableObject {
 
         let baseURL: String
         if let o = owner {
-            baseURL = "https://github.com/\(o)/\(repoName)"
+            baseURL = "\(GitHubHost.web)/\(o)/\(repoName)"
         } else if let remote = repo.remoteUrl, remote.hasPrefix("http") {
             baseURL = remote.replacingOccurrences(of: ".git", with: "")
         } else {
@@ -2005,7 +2025,7 @@ public final class AppState: ObservableObject {
 
         // 1. If cached, show cached data IMMEDIATELY (0ms)
         prListTotalCount = nil
-        if prListAuthorQualifier == nil, let cached = PRListCache.shared.get(owner: owner, repo: repoName, filter: newFilter) {
+        if prListUsesCache, let cached = PRListCache.shared.get(owner: owner, repo: repoName, filter: newFilter) {
             self.pullRequests = cached.pullRequests
             self.isLoadingPRs = false
         } else {
@@ -2029,7 +2049,7 @@ public final class AppState: ObservableObject {
         let repoName = ownerRepo?.name ?? repo.name
 
         // Check cache first: if present, display immediately
-        if prListAuthorQualifier == nil, let cached = PRListCache.shared.get(owner: owner, repo: repoName, filter: self.prFilter) {
+        if prListUsesCache, let cached = PRListCache.shared.get(owner: owner, repo: repoName, filter: self.prFilter) {
             self.pullRequests = cached.pullRequests
             self.isLoadingPRs = false
         } else if self.pullRequests.isEmpty {
@@ -2057,6 +2077,7 @@ public final class AppState: ObservableObject {
 
         let targetFilter = self.prFilter
         let targetAuthor = self.prListAuthorQualifier
+        let targetLabel = self.prLabelFilter
         let targetRepoPath = repo.path
         let ownerRepo = gitHubService.parseRepoOwnerAndName(from: repo.remoteUrl)
         let owner = ownerRepo?.owner ?? "octocat"
@@ -2076,10 +2097,11 @@ public final class AppState: ObservableObject {
 
         do {
             let page = try await gitHubService.fetchPRListPage(
-                owner: owner, repo: repoName, filter: targetFilter, sort: sort, after: nil, author: targetAuthor, token: token
+                owner: owner, repo: repoName, filter: targetFilter, sort: sort, after: nil, author: targetAuthor,
+                label: targetLabel, token: token
             )
             guard self.currentRepo?.path == targetRepoPath, self.prFilter == targetFilter,
-                  self.prListAuthorQualifier == targetAuthor, !Task.isCancelled else { return }
+                  self.prListAuthorQualifier == targetAuthor, self.prLabelFilter == targetLabel, !Task.isCancelled else { return }
 
             let known = Dictionary(self.pullRequests.map { ($0.number, $0) }, uniquingKeysWith: { a, _ in a })
             self.pullRequests = page.prs.map { Self.carryOverEnrichment(into: $0, from: known[$0.number]) }
@@ -2088,7 +2110,9 @@ public final class AppState: ObservableObject {
             self.prListHasMore = page.hasNextPage
             self.isLoadingPRs = false
             self.prListTotalCount = page.totalCount
-            if targetAuthor == nil {
+            if targetLabel != nil {
+                // Tab counts stay unfiltered.
+            } else if targetAuthor == nil {
                 self.prTabCounts[targetFilter] = page.totalCount
             } else if self.prAuthorTabCountsLogin == targetAuthor {
                 self.prAuthorTabCounts[targetFilter] = page.totalCount
@@ -2108,7 +2132,7 @@ public final class AppState: ObservableObject {
                     for (f, count) in counts { self.prTabCounts[f] = count }
                 }
             }
-            if targetAuthor == nil {
+            if targetAuthor == nil, targetLabel == nil {
                 PRListCache.shared.set(owner: owner, repo: repoName, filter: targetFilter,
                                        prs: Array(self.pullRequests.prefix(page.prs.count)), tabCounts: self.prTabCounts)
             }
@@ -2169,14 +2193,16 @@ public final class AppState: ObservableObject {
         let repoName = ownerRepo?.name ?? repo.name
         let filter = prFilter, repoPath = repo.path
         let author = prListAuthorQualifier
+        let label = prLabelFilter
         let token = effectiveGitHubToken
         let sort = UserDefaults.standard.string(forKey: "gitxx_pr_sort")
         isLoadingMorePRs = true
         Task {
             defer { self.isLoadingMorePRs = false }
             guard let page = try? await gitHubService.fetchPRListPage(
-                owner: owner, repo: repoName, filter: filter, sort: sort, after: cursor, author: author, token: token
+                owner: owner, repo: repoName, filter: filter, sort: sort, after: cursor, author: author, label: label, token: token
             ), self.currentRepo?.path == repoPath, self.prFilter == filter, self.prListAuthorQualifier == author,
+               self.prLabelFilter == label,
                self.prListCursor == cursor else { return }
             let existing = Set(self.pullRequests.map(\.number))
             let fresh = page.prs.filter { !existing.contains($0.number) }
@@ -2402,7 +2428,7 @@ public final class AppState: ObservableObject {
                 }
                 let stillComputing = info.mergeable == nil || info.mergeableState == "unknown"
                 guard stillComputing, current.state.isActive, attempt < 3 else { return }
-                await GitHubHTTPCache.shared.remove(for: "https://api.github.com/repos/\(ctx.owner)/\(ctx.repo)/pulls/\(pr.number)")
+                await GitHubHTTPCache.shared.remove(for: "\(GitHubHost.api)/repos/\(ctx.owner)/\(ctx.repo)/pulls/\(pr.number)")
                 try? await Task.sleep(nanoseconds: 2_500_000_000)
                 guard !Task.isCancelled else { return }
             }
@@ -2799,6 +2825,11 @@ public final class AppState: ObservableObject {
                 await MainActor.run {
                     if isValid {
                         self.authenticatedUsername = username
+                        if let username {
+                            self.gitHubViewerLogin = username
+                            UserDefaults.standard.set(username, forKey: "gitxx_github_viewer_login")
+                            self.rememberGitHubAccount(login: username, token: trimmed, method: method)
+                        }
                         let nameStr = username != nil ? "@\(username!)" : "GitHub"
                         self.showToast("Connected to \(nameStr) via \(method.rawValue)!", type: .success)
                         self.prFetchError = nil
@@ -2870,6 +2901,7 @@ public final class AppState: ObservableObject {
         isExecutingGitCommand = true
 
         let activeShell = self.selectedShell
+        let sessionID = currentTerminalSessionID
 
         Task {
             do {
@@ -2893,7 +2925,7 @@ public final class AppState: ObservableObject {
                     duration: duration
                 )
 
-                self.terminalEntries.append(entry)
+                self.appendTerminalEntry(entry, to: sessionID)
                 self.refreshRepo()
             } catch {
                 self.isExecutingGitCommand = false
@@ -2913,7 +2945,7 @@ public final class AppState: ObservableObject {
                     exitCode: 1,
                     duration: duration
                 )
-                self.terminalEntries.append(entry)
+                self.appendTerminalEntry(entry, to: sessionID)
             }
         }
     }
@@ -3039,7 +3071,7 @@ public final class AppState: ObservableObject {
             process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
             process.arguments = [
                 "-T", "-i", key, "-o", "IdentitiesOnly=yes", "-o", "BatchMode=yes",
-                "-o", "ConnectTimeout=8", "-o", "StrictHostKeyChecking=accept-new", "git@github.com"
+                "-o", "ConnectTimeout=8", "-o", "StrictHostKeyChecking=accept-new", "git@\(GitHubHost.host)"
             ]
             let pipe = Pipe()
             process.standardOutput = pipe

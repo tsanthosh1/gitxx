@@ -5,6 +5,11 @@ public struct DiffViewer: View {
     @ObservedObject var state: AppState
     let diff: FileDiff?
     let title: String?
+    /// Revisions to read for an image preview when a fixed `diff` is an image; the Changes tab derives its own.
+    let imageSources: ImageDiffSources?
+    /// Commit to blame a fixed `diff` at; the Changes tab blames the working copy.
+    let blameRevision: String?
+    @State private var showBlame = false
     @State private var anchorRow: Int?
     @State private var pendingDiscard: DiscardRequest?
     @State private var hoveredRow: Int?
@@ -76,10 +81,28 @@ public struct DiffViewer: View {
         var newEnd: Int { newFirst + newCount }
     }
 
-    public init(state: AppState, diff: FileDiff? = nil, title: String? = nil) {
+    public init(state: AppState, diff: FileDiff? = nil, title: String? = nil, imageSources: ImageDiffSources? = nil, blameRevision: String? = nil) {
         self.state = state
         self.diff = diff
         self.title = title
+        self.imageSources = imageSources
+        self.blameRevision = blameRevision
+    }
+
+    private var canBlame: Bool {
+        guard let d = activeDiff, !d.isBinary, state.currentRepo != nil else { return false }
+        if diff != nil { return blameRevision != nil }
+        guard let file = state.selectedFile else { return false }
+        return file.changeKind != .untracked && file.changeKind != .added && file.changeKind != .deleted
+    }
+
+    private var resolvedImageSources: ImageDiffSources? {
+        guard let path = activeDiff?.path, ImageDiffSources.isImage(path) else { return nil }
+        if diff != nil { return imageSources }
+        guard let file = state.selectedFile else { return nil }
+        if file.isStaged { return ImageDiffSources(old: .revision("HEAD"), new: .revision("")) }
+        if file.changeKind == .untracked { return ImageDiffSources(old: .none, new: .workingTree) }
+        return ImageDiffSources(old: .revision(""), new: .workingTree)
     }
 
     private var activeDiff: FileDiff? {
@@ -472,6 +495,25 @@ public struct DiffViewer: View {
                 .pickerStyle(.segmented)
                 .frame(width: state.isNarrowWidth ? 112 : 140)
 
+                if canBlame {
+                    Button {
+                        showBlame = true
+                    } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: "person.text.rectangle")
+                                .font(.system(size: 12))
+                            if !state.isNarrowWidth {
+                                Text("Blame")
+                                    .font(.system(size: 12, weight: .medium))
+                            }
+                        }
+                        .frame(height: 26)
+                        .padding(.horizontal, 4)
+                    }
+                    .buttonStyle(.bordered)
+                    .help("Show who last changed each line of this file")
+                }
+
                 // Open in External Editor
                 if let path = activeDiff?.path, let repoPath = state.currentRepo?.path {
                     Button {
@@ -501,7 +543,9 @@ public struct DiffViewer: View {
 
             // Diff Content Area
             if let activeDiff = activeDiff {
-                if activeDiff.isBinary {
+                if let sources = resolvedImageSources, let repoPath = state.currentRepo?.path {
+                    ImageDiffView(repoPath: repoPath, path: activeDiff.path, sources: sources)
+                } else if activeDiff.isBinary {
                     binaryFileNotice
                 } else if activeDiff.hunks.isEmpty {
                     emptyDiffNotice
@@ -526,6 +570,11 @@ public struct DiffViewer: View {
             expansions = [:]
         }
         .task(id: expansionSourceID) { await loadFileLines() }
+        .sheet(isPresented: $showBlame) {
+            if let path = activeDiff?.path, let repoPath = state.currentRepo?.path {
+                BlameView(state: state, repoPath: repoPath, path: path, revision: diff == nil ? nil : blameRevision)
+            }
+        }
         .confirmationDialog(
             "Discard these changes?",
             isPresented: Binding(get: { pendingDiscard != nil }, set: { if !$0 { pendingDiscard = nil } }),

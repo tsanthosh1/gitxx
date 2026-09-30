@@ -239,7 +239,7 @@ private struct HomeRepositoryRow: View {
     @State private var branch: String?
 
     private var ownerAndName: (owner: String, name: String)? {
-        guard let remote = repo.remoteUrl, remote.contains("github.com") else { return nil }
+        guard let remote = repo.remoteUrl, remote.contains("github.com") || remote.contains(GitHubHost.host) else { return nil }
         return state.gitHubService.parseRepoOwnerAndName(from: remote).map { ($0.owner, $0.name) }
     }
 

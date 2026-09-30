@@ -303,7 +303,7 @@ enum PRReviewStatusFetcher {
     }
 
     private static func post(_ body: [String: Any], token: String) async throws -> Data {
-        var request = URLRequest(url: URL(string: "https://api.github.com/graphql")!, timeoutInterval: 40)
+        var request = URLRequest(url: GitHubHost.graphQL, timeoutInterval: 40)
         request.httpMethod = "POST"
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("GitXX-macOS-Client", forHTTPHeaderField: "User-Agent")

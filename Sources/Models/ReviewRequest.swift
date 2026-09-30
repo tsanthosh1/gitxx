@@ -45,7 +45,7 @@ public struct ReviewRequestItem: Codable, Identifiable, Hashable, Sendable {
     var owner: String
     var repo: String
     var number: Int
-    var url: String { "https://github.com/\(owner)/\(repo)/pull/\(number)" }
+    var url: String { "\(GitHubHost.web)/\(owner)/\(repo)/pull/\(number)" }
 
     // From Slack
     var requestedBy: String?

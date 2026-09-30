@@ -3,7 +3,7 @@ import Foundation
 public actor GitHubAPIService {
     public static let shared = GitHubAPIService()
 
-    private let endpoint = URL(string: "https://api.github.com/graphql")!
+    private var endpoint: URL { GitHubHost.graphQL }
     private var rateLimitInfo = GitHubRateLimitInfo()
 
     public init() {}
@@ -18,15 +18,17 @@ public actor GitHubAPIService {
     }
 
     nonisolated public func parseRepoOwnerAndName(from remoteUrl: String?) -> RepoOwnerAndName? {
-        guard let url = remoteUrl else { return nil }
-        // Match git@github.com:owner/repo.git or https://github.com/owner/repo.git
-        let cleaned = url
-            .replacingOccurrences(of: "git@github.com:", with: "")
-            .replacingOccurrences(of: "https://github.com/", with: "")
-            .replacingOccurrences(of: ".git", with: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard var path = remoteUrl?.trimmingCharacters(in: .whitespacesAndNewlines), !path.isEmpty else { return nil }
+        // https://host/owner/repo.git, ssh://git@host:22/owner/repo.git, or scp-style git@host:owner/repo.git
+        if let scheme = path.range(of: "://") {
+            path = String(path[scheme.upperBound...])
+            path = path.firstIndex(of: "/").map { String(path[path.index(after: $0)...]) } ?? ""
+        } else if let colon = path.firstIndex(of: ":"), !path[..<colon].contains("/") {
+            path = String(path[path.index(after: colon)...])
+        }
+        if path.hasSuffix(".git") { path.removeLast(4) }
 
-        let parts = cleaned.components(separatedBy: "/")
+        let parts = path.components(separatedBy: "/").filter { !$0.isEmpty }
         if parts.count >= 2 {
             return RepoOwnerAndName(owner: parts[0], name: parts[1])
         }
@@ -36,7 +38,7 @@ public actor GitHubAPIService {
     public static func getGitHubCLIToken() -> String? {
         let task = Process()
         task.launchPath = "/bin/zsh"
-        task.arguments = ["-c", "export PATH=\"/opt/homebrew/bin:/usr/local/bin:$PATH\"; gh auth token 2>/dev/null"]
+        task.arguments = ["-c", "export PATH=\"/opt/homebrew/bin:/usr/local/bin:$PATH\"; gh auth token\(GitHubHost.isEnterprise ? " --hostname \(GitHubHost.host)" : "") 2>/dev/null"]
         let pipe = Pipe()
         task.standardOutput = pipe
         task.standardError = Pipe()
@@ -229,7 +231,7 @@ public actor GitHubAPIService {
             return (false, nil, "Token is empty")
         }
 
-        guard let url = URL(string: "https://api.github.com/user") else {
+        guard let url = URL(string: "\(GitHubHost.api)/user") else {
             return (false, nil, "Invalid URL")
         }
 
@@ -285,7 +287,7 @@ public actor GitHubAPIService {
     /// One page of the PR list with only cheap fields (~0.7s on large repos). Diff stats, review decision
     /// and CI rollups are fetched separately by `fetchPREnrichment`, since they multiply the query cost.
     public func fetchPRListPage(owner: String, repo: String, filter: PRFilter, sort: String?, after: String?,
-                                author: String? = nil, pageSize: Int = 25, token: String?) async throws -> PRListPage {
+                                author: String? = nil, label: String? = nil, pageSize: Int = 25, token: String?) async throws -> PRListPage {
         guard let token = token?.trimmingCharacters(in: .whitespacesAndNewlines), !token.isEmpty else {
             return PRListPage(prs: [], totalCount: 0, endCursor: nil, hasNextPage: false)
         }
@@ -299,13 +301,20 @@ public actor GitHubAPIService {
                 number title body state isDraft url createdAt totalCommentsCount
                 headRefName headRefOid baseRefName
                 author { login avatarUrl }
+                labels(first: 10) { nodes { name color } }
+                reviewRequests(first: 10) { nodes { requestedReviewer {
+                  ... on User { login avatarUrl }
+                  ... on Team { name avatarUrl }
+                } } }
+                latestReviews(first: 10) { nodes { state author { __typename login avatarUrl } } }
               }
             }
           }
         }
         """
         var variables: [String: Any] = [
-            "q": buildSearchQuery(owner: owner, repo: repo, filter: filter) + (author.map { " author:\($0)" } ?? "") + " " + Self.searchSortQualifier(sort),
+            "q": buildSearchQuery(owner: owner, repo: repo, filter: filter) + (author.map { " author:\($0)" } ?? "")
+                + (label.map { " label:\"\($0.replacingOccurrences(of: "\"", with: ""))\"" } ?? "") + " " + Self.searchSortQualifier(sort),
             "first": pageSize,
         ]
         if let after { variables["after"] = after }
@@ -555,7 +564,7 @@ public actor GitHubAPIService {
     ) async throws -> (prs: [PullRequest], counts: [PRFilter: Int]) {
         let q = buildSearchQuery(owner: owner, repo: repo, filter: filter)
         guard let encodedQ = q.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-              let url = URL(string: "https://api.github.com/search/issues?q=\(encodedQ)&per_page=50&sort=updated&order=desc") else {
+              let url = URL(string: "\(GitHubHost.api)/search/issues?q=\(encodedQ)&per_page=50&sort=updated&order=desc") else {
             throw NSError(domain: "GitHubAPI", code: 400, userInfo: [NSLocalizedDescriptionKey: "Invalid GitHub repository search URL"])
         }
 
@@ -589,7 +598,7 @@ public actor GitHubAPIService {
 
     public func fetchPullRequest(owner: String, repo: String, number: Int, token: String?) async throws -> PullRequest? {
         guard let token = token?.trimmingCharacters(in: .whitespacesAndNewlines), !token.isEmpty,
-              let url = URL(string: "https://api.github.com/repos/\(owner)/\(repo)/pulls/\(number)") else { return nil }
+              let url = URL(string: "\(GitHubHost.api)/repos/\(owner)/\(repo)/pulls/\(number)") else { return nil }
         let result = try await executeCachedGET(url: url, token: token)
         guard let object = try JSONSerialization.jsonObject(with: result.data) as? [String: Any] else { return nil }
         if object["number"] == nil, let message = object["message"] as? String {
@@ -600,7 +609,7 @@ public actor GitHubAPIService {
     }
 
     private func fetchPullRequestsREST(owner: String, repo: String, token: String) async throws -> [PullRequest] {
-        let urlString = "https://api.github.com/repos/\(owner)/\(repo)/pulls?state=all&per_page=50&sort=updated&direction=desc"
+        let urlString = "\(GitHubHost.api)/repos/\(owner)/\(repo)/pulls?state=all&per_page=50&sort=updated&direction=desc"
         guard let url = URL(string: urlString) else {
             throw NSError(domain: "GitHubAPI", code: 400, userInfo: [NSLocalizedDescriptionKey: "Invalid GitHub repository URL for \(owner)/\(repo)."])
         }
@@ -779,7 +788,7 @@ public actor GitHubAPIService {
                 }
             }
 
-            return PullRequest(
+            var pr = PullRequest(
                 number: number,
                 title: title,
                 body: body,
@@ -802,7 +811,47 @@ public actor GitHubAPIService {
                 totalChecksCount: totalChecks,
                 passedChecksCount: passedChecks
             )
+            if let nodes = (dict["labels"] as? [String: Any])?["nodes"] as? [[String: Any]] {
+                pr.labels = nodes.compactMap { node in
+                    (node["name"] as? String).map { PRLabel(name: $0, color: (node["color"] as? String) ?? "8b949e") }
+                }
+            }
+            if dict["reviewRequests"] != nil || dict["latestReviews"] != nil {
+                pr.reviewers = Self.parseListReviewers(dict, author: authorName)
+            }
+            return pr
         }
+    }
+
+    /// Latest review per reviewer, then still-requested reviewers who haven't reviewed. The author's own
+    /// comments on their PR aren't a review.
+    private static func parseListReviewers(_ dict: [String: Any], author: String) -> [PRListReviewer] {
+        var result: [PRListReviewer] = []
+        var seen = Set<String>()
+        for node in (dict["latestReviews"] as? [String: Any])?["nodes"] as? [[String: Any]] ?? [] {
+            guard let who = node["author"] as? [String: Any], let login = who["login"] as? String,
+                  who["__typename"] as? String != "Bot", login != author, !seen.contains(login.lowercased()) else { continue }
+            let status: PRListReviewer.Status
+            switch node["state"] as? String {
+            case "APPROVED": status = .approved
+            case "CHANGES_REQUESTED": status = .changesRequested
+            case "COMMENTED": status = .commented
+            default: continue
+            }
+            seen.insert(login.lowercased())
+            result.append(PRListReviewer(login: login, avatarUrl: who["avatarUrl"] as? String, status: status))
+        }
+        for node in (dict["reviewRequests"] as? [String: Any])?["nodes"] as? [[String: Any]] ?? [] {
+            guard let who = node["requestedReviewer"] as? [String: Any],
+                  let login = (who["login"] as? String) ?? (who["name"] as? String) else { continue }
+            if seen.contains(login.lowercased()) {
+                // Re-requested after reviewing: waiting on them again.
+                result.removeAll { $0.login.lowercased() == login.lowercased() }
+            }
+            seen.insert(login.lowercased())
+            result.append(PRListReviewer(login: login, avatarUrl: who["avatarUrl"] as? String, status: .requested))
+        }
+        return result
     }
 
     private func parseErrorMessage(from data: Data) -> String? {
@@ -893,7 +942,7 @@ public actor GitHubAPIService {
     /// All changed files, 100 per page; pages after the first are fetched in parallel (GitHub caps this at 3,000).
     public func fetchPRFiles(owner: String, repo: String, prNumber: Int, expectedCount: Int = 0, token: String?) async throws -> [PRFileChange] {
         guard let token = token?.trimmingCharacters(in: .whitespacesAndNewlines), !token.isEmpty else { return [] }
-        let base = "https://api.github.com/repos/\(owner)/\(repo)/pulls/\(prNumber)/files?per_page=100"
+        let base = "\(GitHubHost.api)/repos/\(owner)/\(repo)/pulls/\(prNumber)/files?per_page=100"
         guard let url = URL(string: base) else { return [] }
         let first = parseFileChanges(try await executeCachedGET(url: url, token: token).data)
         guard first.count == 100 else { return first }
@@ -952,6 +1001,25 @@ public actor GitHubAPIService {
 
     /// Private helper: GET a URL, log it, and return parsed JSON array.
     /// Returns nil for optional endpoints on error; throws for required endpoints.
+    /// Every page of a list endpoint, merged into one JSON array. A full page means there may be more (the
+    /// `Link` header isn't available for 304 cache hits); capped at 10 pages, 1,000 items.
+    private func timelineFetchAllPages(urlStr: String, token: String, required: Bool = false) async throws -> Data? {
+        let perPage = 100
+        var all: [Any] = []
+        for page in 1...10 {
+            guard let data = try await timelineFetchData(urlStr: "\(urlStr)?per_page=\(perPage)&page=\(page)", token: token,
+                                                         required: required && page == 1),
+                  let items = try? JSONSerialization.jsonObject(with: data) as? [Any] else {
+                if page == 1 { return nil }
+                break
+            }
+            if page == 1 && items.count < perPage { return data }
+            all += items
+            if items.count < perPage { break }
+        }
+        return try? JSONSerialization.data(withJSONObject: all)
+    }
+
     private func timelineFetchData(
         urlStr: String,
         token: String,
@@ -1019,13 +1087,13 @@ public actor GitHubAPIService {
         }
 
         let iso = ISO8601DateFormatter()
-        let base = "https://api.github.com/repos/\(owner)/\(repo)"
+        let base = "\(GitHubHost.api)/repos/\(owner)/\(repo)"
 
         // --- Concurrent parallel fetching of all 4 timeline sources ---
-        async let issueTask = timelineFetchData(urlStr: "\(base)/issues/\(prNumber)/comments?per_page=100", token: token, required: true)
-        async let reviewsTask = timelineFetchData(urlStr: "\(base)/pulls/\(prNumber)/reviews?per_page=100", token: token)
-        async let prCommentsTask = timelineFetchData(urlStr: "\(base)/pulls/\(prNumber)/comments?per_page=100", token: token)
-        async let commitsTask = timelineFetchData(urlStr: "\(base)/pulls/\(prNumber)/commits?per_page=50", token: token)
+        async let issueTask = timelineFetchAllPages(urlStr: "\(base)/issues/\(prNumber)/comments", token: token, required: true)
+        async let reviewsTask = timelineFetchAllPages(urlStr: "\(base)/pulls/\(prNumber)/reviews", token: token)
+        async let prCommentsTask = timelineFetchAllPages(urlStr: "\(base)/pulls/\(prNumber)/comments", token: token)
+        async let commitsTask = timelineFetchAllPages(urlStr: "\(base)/pulls/\(prNumber)/commits", token: token)
 
         let (issueData, reviewsData, allReviewCommentsData, commitsData) = try await (issueTask, reviewsTask, prCommentsTask, commitsTask)
 
@@ -1047,13 +1115,15 @@ public actor GitHubAPIService {
                 let userDict = item["user"] as? [String: Any]
                 let authorName = (userDict?["login"] as? String) ?? "unknown"
                 let avatarUrl = userDict?["avatar_url"] as? String
-                issueComments.append(PRComment(
+                var comment = PRComment(
                     id: idStr,
                     authorName: authorName,
                     authorAvatarUrl: avatarUrl,
                     body: body,
                     createdAt: createdAt
-                ))
+                )
+                comment.reactions = Self.parseReactionCounts(item["reactions"])
+                issueComments.append(comment)
             }
         }
 
@@ -1120,7 +1190,7 @@ public actor GitHubAPIService {
             let updatedStr = item["updated_at"] as? String
             let updatedAt = updatedStr.flatMap { iso.date(from: $0) }
 
-            let comment = PRReviewComment(
+            var comment = PRReviewComment(
                 id: idStr,
                 authorName: authorName,
                 authorAvatarUrl: avatarUrl,
@@ -1135,6 +1205,7 @@ public actor GitHubAPIService {
                 htmlUrl: htmlUrl,
                 side: item["side"] as? String
             )
+            comment.reactions = Self.parseReactionCounts(item["reactions"])
             let threadKey = inReplyToId ?? idStr
             parsedReviewComments.append((comment: comment, threadKey: threadKey, isReply: inReplyToId != nil))
         }
@@ -1205,6 +1276,57 @@ public actor GitHubAPIService {
         return items.sorted { $0.sortDate < $1.sortDate }
     }
 
+    /// REST `reactions` rollup (`{"+1": 2, "heart": 1, …}`) with zero counts dropped.
+    static func parseReactionCounts(_ raw: Any?) -> [String: Int]? {
+        guard let dict = raw as? [String: Any] else { return nil }
+        var counts: [String: Int] = [:]
+        for key in PRReaction.allCases.map(\.rawValue) {
+            if let n = dict[key] as? Int, n > 0 { counts[key] = n }
+        }
+        return counts
+    }
+
+    /// Adds the viewer's reaction, or removes it if they already reacted with that emoji. Returns true when
+    /// the reaction is now present. `kind` is "issue" (conversation comment) or "review" (inline comment).
+    public func toggleReaction(owner: String, repo: String, kind: String, commentId: String, content: PRReaction,
+                               viewer: String, token: String?) async throws -> Bool {
+        guard let token = token?.trimmingCharacters(in: .whitespacesAndNewlines), !token.isEmpty else {
+            throw NSError(domain: "GitHubAPI", code: 401, userInfo: [NSLocalizedDescriptionKey: "No GitHub token configured."])
+        }
+        let path = kind == "review" ? "pulls/comments" : "issues/comments"
+        let base = "\(GitHubHost.api)/repos/\(owner)/\(repo)/\(path)/\(commentId)/reactions"
+        func request(_ url: String, method: String, body: [String: Any]? = nil) async throws -> (Data, Int) {
+            guard let url = URL(string: url) else { throw URLError(.badURL) }
+            var req = URLRequest(url: url)
+            req.httpMethod = method
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+            req.setValue("GitXX-macOS-Client", forHTTPHeaderField: "User-Agent")
+            if let body {
+                req.httpBody = try JSONSerialization.data(withJSONObject: body)
+                req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            }
+            let (data, response) = try await GitHubHTTP.session.data(for: req)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            if status >= 400 {
+                let message = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["message"] as? String
+                throw NSError(domain: "GitHubAPI", code: status, userInfo: [NSLocalizedDescriptionKey: message ?? "HTTP \(status)"])
+            }
+            return (data, status)
+        }
+        let encoded = content.rawValue.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? content.rawValue
+        let (listData, _) = try await request("\(base)?content=\(encoded)&per_page=100", method: "GET")
+        let existing = (try? JSONSerialization.jsonObject(with: listData) as? [[String: Any]])?.first {
+            (($0["user"] as? [String: Any])?["login"] as? String)?.caseInsensitiveCompare(viewer) == .orderedSame
+        }
+        if let id = existing?["id"] {
+            _ = try await request("\(base)/\(id)", method: "DELETE")
+            return false
+        }
+        _ = try await request(base, method: "POST", body: ["content": content.rawValue])
+        return true
+    }
+
     public func fetchRequiredCheckContexts(
         owner: String,
         repo: String,
@@ -1215,7 +1337,7 @@ public actor GitHubAPIService {
         var contexts = Set<String>()
 
         // 1. Try modern repository rulesets endpoint: GET /repos/{owner}/{repo}/rules/branches/{branch}
-        if let rulesUrl = URL(string: "https://api.github.com/repos/\(owner)/\(repo)/rules/branches/\(baseBranch)") {
+        if let rulesUrl = URL(string: "\(GitHubHost.api)/repos/\(owner)/\(repo)/rules/branches/\(baseBranch)") {
             if let result = try? await executeCachedGET(url: rulesUrl, token: token),
                let rulesArray = try? JSONSerialization.jsonObject(with: result.data) as? [[String: Any]] {
                 for rule in rulesArray {
@@ -1233,7 +1355,7 @@ public actor GitHubAPIService {
         }
 
         // 2. Try classic branch protection: GET /repos/{owner}/{repo}/branches/{branch}/protection/required_status_checks
-        if contexts.isEmpty, let protUrl = URL(string: "https://api.github.com/repos/\(owner)/\(repo)/branches/\(baseBranch)/protection/required_status_checks") {
+        if contexts.isEmpty, let protUrl = URL(string: "\(GitHubHost.api)/repos/\(owner)/\(repo)/branches/\(baseBranch)/protection/required_status_checks") {
             if let result = try? await executeCachedGET(url: protUrl, token: token),
                let json = try? JSONSerialization.jsonObject(with: result.data) as? [String: Any],
                let list = json["contexts"] as? [String] {
@@ -1267,7 +1389,7 @@ public actor GitHubAPIService {
         // 1. Fetch GitHub Actions check-runs (Cached with ETag & 304 support)
         var checkRunPages: [[[String: Any]]] = []
         for page in 1...5 {
-            guard let url = URL(string: "https://api.github.com/repos/\(owner)/\(repo)/commits/\(sha)/check-runs?filter=latest&per_page=100\(page > 1 ? "&page=\(page)" : "")"),
+            guard let url = URL(string: "\(GitHubHost.api)/repos/\(owner)/\(repo)/commits/\(sha)/check-runs?filter=latest&per_page=100\(page > 1 ? "&page=\(page)" : "")"),
                   let result = try? await executeCachedGET(url: url, token: token),
                   let json = try? JSONSerialization.jsonObject(with: result.data) as? [String: Any],
                   let runs = json["check_runs"] as? [[String: Any]] else { break }
@@ -1332,7 +1454,7 @@ public actor GitHubAPIService {
         }
 
         // 2. Fetch commit status contexts (Cached with ETag & 304 support)
-        if let statusUrl = URL(string: "https://api.github.com/repos/\(owner)/\(repo)/commits/\(sha)/status") {
+        if let statusUrl = URL(string: "\(GitHubHost.api)/repos/\(owner)/\(repo)/commits/\(sha)/status") {
             if let result = try? await executeCachedGET(url: statusUrl, token: token),
                let json = try? JSONSerialization.jsonObject(with: result.data) as? [String: Any],
                let statuses = json["statuses"] as? [[String: Any]] {
@@ -1384,7 +1506,7 @@ public actor GitHubAPIService {
         let iso = ISO8601DateFormatter()
         var commits: [PRCommit] = []
         for page in 1...3 {
-            guard let url = URL(string: "https://api.github.com/repos/\(owner)/\(repo)/pulls/\(prNumber)/commits?per_page=100&page=\(page)") else { break }
+            guard let url = URL(string: "\(GitHubHost.api)/repos/\(owner)/\(repo)/pulls/\(prNumber)/commits?per_page=100&page=\(page)") else { break }
             let data = try await executeCachedGET(url: url, token: token).data
             let items = (try? JSONSerialization.jsonObject(with: data) as? [[String: Any]]) ?? []
             for item in items {
@@ -1409,7 +1531,7 @@ public actor GitHubAPIService {
     /// Files changed by a single commit, in the same shape as PR files.
     public func fetchCommitFiles(owner: String, repo: String, sha: String, token: String?) async throws -> [PRFileChange] {
         guard let token = token?.trimmingCharacters(in: .whitespacesAndNewlines), !token.isEmpty,
-              let url = URL(string: "https://api.github.com/repos/\(owner)/\(repo)/commits/\(sha)?per_page=300") else { return [] }
+              let url = URL(string: "\(GitHubHost.api)/repos/\(owner)/\(repo)/commits/\(sha)?per_page=300") else { return [] }
         return parseFileChanges(try await executeCachedGET(url: url, token: token).data)
     }
 
@@ -1444,7 +1566,7 @@ public actor GitHubAPIService {
             return PRMergeabilityInfo(mergeable: nil, mergeableState: nil, rebaseable: nil, isDraft: false)
         }
 
-        let urlString = "https://api.github.com/repos/\(owner)/\(repo)/pulls/\(prNumber)"
+        let urlString = "\(GitHubHost.api)/repos/\(owner)/\(repo)/pulls/\(prNumber)"
         guard let url = URL(string: urlString) else {
             return PRMergeabilityInfo(mergeable: nil, mergeableState: nil, rebaseable: nil, isDraft: false)
         }
@@ -1474,7 +1596,7 @@ public actor GitHubAPIService {
     public func fetchBehindBy(owner: String, repo: String, baseBranch: String, headSha: String, token: String?) async throws -> Int? {
         guard let token = token?.trimmingCharacters(in: .whitespacesAndNewlines), !token.isEmpty,
               let base = baseBranch.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
-              let url = URL(string: "https://api.github.com/repos/\(owner)/\(repo)/compare/\(base)...\(headSha)?per_page=1") else { return nil }
+              let url = URL(string: "\(GitHubHost.api)/repos/\(owner)/\(repo)/compare/\(base)...\(headSha)?per_page=1") else { return nil }
         let result = try await executeCachedGET(url: url, token: token)
         guard let json = try JSONSerialization.jsonObject(with: result.data) as? [String: Any] else { return nil }
         return json["behind_by"] as? Int
@@ -1491,7 +1613,7 @@ public actor GitHubAPIService {
             throw NSError(domain: "GitHubAPI", code: 401, userInfo: [NSLocalizedDescriptionKey: "No GitHub token configured."])
         }
 
-        let urlString = "https://api.github.com/repos/\(owner)/\(repo)/pulls/\(prNumber)/update-branch"
+        let urlString = "\(GitHubHost.api)/repos/\(owner)/\(repo)/pulls/\(prNumber)/update-branch"
         guard let url = URL(string: urlString) else { return }
 
         var request = URLRequest(url: url)
@@ -1511,7 +1633,7 @@ public actor GitHubAPIService {
             throw NSError(domain: "GitHubAPI", code: statusCode, userInfo: [NSLocalizedDescriptionKey: "Failed to update branch: \(msg)"])
         }
 
-        await GitHubHTTPCache.shared.remove(for: "https://api.github.com/repos/\(owner)/\(repo)/pulls/\(prNumber)")
+        await GitHubHTTPCache.shared.remove(for: "\(GitHubHost.api)/repos/\(owner)/\(repo)/pulls/\(prNumber)")
     }
 
 
@@ -1554,7 +1676,7 @@ public actor GitHubAPIService {
             return
         }
 
-        let urlString = "https://api.github.com/repos/\(owner)/\(repo)/pulls/\(prNumber)"
+        let urlString = "\(GitHubHost.api)/repos/\(owner)/\(repo)/pulls/\(prNumber)"
         guard let url = URL(string: urlString) else { return }
 
         var request = URLRequest(url: url)
@@ -1618,7 +1740,7 @@ public actor GitHubAPIService {
         }
 
         // Invalidate cached pulls list and single pull response
-        await GitHubHTTPCache.shared.remove(for: "https://api.github.com/repos/\(owner)/\(repo)/pulls?state=all&per_page=50")
+        await GitHubHTTPCache.shared.remove(for: "\(GitHubHost.api)/repos/\(owner)/\(repo)/pulls?state=all&per_page=50")
         await GitHubHTTPCache.shared.remove(for: urlString)
     }
 
@@ -1670,7 +1792,7 @@ public actor GitHubAPIService {
             throw NSError(domain: "GitHubAPI", code: 401, userInfo: [NSLocalizedDescriptionKey: "No GitHub token configured."])
         }
 
-        let urlString = "https://api.github.com/repos/\(owner)/\(repo)/pulls/\(prNumber)/merge"
+        let urlString = "\(GitHubHost.api)/repos/\(owner)/\(repo)/pulls/\(prNumber)/merge"
         guard let url = URL(string: urlString) else {
             throw NSError(domain: "GitHubAPI", code: 400, userInfo: [NSLocalizedDescriptionKey: "Invalid merge URL."])
         }
@@ -1741,8 +1863,8 @@ public actor GitHubAPIService {
         let merged = (json["merged"] as? Bool) ?? true
 
         // Invalidate cached PR listings and details
-        await GitHubHTTPCache.shared.remove(for: "https://api.github.com/repos/\(owner)/\(repo)/pulls?state=all&per_page=50")
-        await GitHubHTTPCache.shared.remove(for: "https://api.github.com/repos/\(owner)/\(repo)/pulls/\(prNumber)")
+        await GitHubHTTPCache.shared.remove(for: "\(GitHubHost.api)/repos/\(owner)/\(repo)/pulls?state=all&per_page=50")
+        await GitHubHTTPCache.shared.remove(for: "\(GitHubHost.api)/repos/\(owner)/\(repo)/pulls/\(prNumber)")
 
         return MergeResult(sha: sha, merged: merged, message: message)
     }
@@ -1759,7 +1881,7 @@ public actor GitHubAPIService {
             throw NSError(domain: "GitHubAPI", code: 401, userInfo: [NSLocalizedDescriptionKey: "No GitHub token configured."])
         }
 
-        let urlString = "https://api.github.com/repos/\(owner)/\(repo)/pulls/\(prNumber)"
+        let urlString = "\(GitHubHost.api)/repos/\(owner)/\(repo)/pulls/\(prNumber)"
         guard let url = URL(string: urlString) else { return }
 
         var request = URLRequest(url: url)
@@ -1813,7 +1935,7 @@ public actor GitHubAPIService {
             throw NSError(domain: "GitHubAPI", code: statusCode, userInfo: [NSLocalizedDescriptionKey: "Failed to \(state) pull request: \(errorMsg)"])
         }
 
-        await GitHubHTTPCache.shared.remove(for: "https://api.github.com/repos/\(owner)/\(repo)/pulls?state=all&per_page=50")
+        await GitHubHTTPCache.shared.remove(for: "\(GitHubHost.api)/repos/\(owner)/\(repo)/pulls?state=all&per_page=50")
         await GitHubHTTPCache.shared.remove(for: urlString)
     }
 
@@ -1845,7 +1967,7 @@ public actor GitHubAPIService {
             )
         }
 
-        let url = URL(string: "https://api.github.com/repos/\(owner)/\(repo)/pulls")!
+        let url = URL(string: "\(GitHubHost.api)/repos/\(owner)/\(repo)/pulls")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")

@@ -192,6 +192,7 @@ public struct PRIndexView: View {
             HStack(spacing: 8) {
                 searchField
                 authorFilterButton
+                labelFilterMenu
                 sortMenu
             }
         }
@@ -325,6 +326,59 @@ public struct PRIndexView: View {
         .popover(isPresented: $showAuthorPicker, arrowEdge: .bottom) {
             PRAuthorPickerPopover(state: state, isPresented: $showAuthorPicker)
         }
+    }
+
+    /// Repository labels, plus any seen on loaded PRs before the label list arrives.
+    private var knownLabels: [PRLabel] {
+        var byName: [String: PRLabel] = [:]
+        for pr in state.pullRequests { for l in pr.labels ?? [] { byName[l.name] = l } }
+        for l in state.repoLabels { byName[l.name] = l }
+        return byName.values.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    private var labelFilterMenu: some View {
+        let selected = state.prLabelFilter
+        let selectedLabel = selected.flatMap { name in knownLabels.first { $0.name == name } ?? PRLabel(name: name, color: "8b949e") }
+        return Menu {
+            Button("Any label") { state.setPRLabelFilter(nil) }
+            Divider()
+            ForEach(knownLabels, id: \.name) { label in
+                Button {
+                    state.setPRLabelFilter(label.name)
+                } label: {
+                    if label.name == selected { Label(label.name, systemImage: "checkmark") } else { Text(label.name) }
+                }
+            }
+        } label: {
+            HStack(spacing: 7) {
+                if let selectedLabel {
+                    Circle().fill(selectedLabel.swiftUIColor).frame(width: 8, height: 8)
+                    Text(selectedLabel.name)
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                } else {
+                    Image(systemName: "tag")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(.secondary)
+                    Text("Any label")
+                        .font(.system(size: 12.5, weight: .medium))
+                }
+                Spacer(minLength: 2)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 11)
+            .frame(width: 170, height: Self.filterControlHeight)
+            .background(filterControlBackground(active: selected != nil))
+            .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help(selected.map { "Showing pull requests labelled \($0)" } ?? "Filter by label")
+        .onAppear { state.loadRepoLabels() }
     }
 
     private var sortMenu: some View {
@@ -773,6 +827,8 @@ public struct PRIndexRowView: View, Equatable {
                lhs.pr.changedFilesCount == rhs.pr.changedFilesCount &&
                lhs.pr.additions == rhs.pr.additions &&
                lhs.pr.deletions == rhs.pr.deletions &&
+               lhs.pr.labels == rhs.pr.labels &&
+               lhs.pr.reviewers == rhs.pr.reviewers &&
                lhs.isEnriching == rhs.isEnriching &&
                lhs.accentColor == rhs.accentColor
     }
@@ -809,6 +865,25 @@ public struct PRIndexRowView: View, Equatable {
                             .background(Color.secondary.opacity(0.12))
                             .foregroundStyle(.secondary)
                             .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                    }
+
+                    if let labels = pr.labels, !labels.isEmpty {
+                        HStack(spacing: 4) {
+                            ForEach(labels.prefix(3), id: \.name) { PRLabelPill(label: $0) }
+                            if labels.count > 3 {
+                                Text("+\(labels.count - 3)")
+                                    .font(.system(size: 10.5, weight: .semibold))
+                                    .foregroundStyle(.secondary)
+                                    .help(labels.dropFirst(3).map(\.name).joined(separator: ", "))
+                            }
+                        }
+                        .fixedSize()
+                    }
+
+                    Spacer(minLength: 8)
+
+                    if let reviewers = pr.reviewers, !reviewers.isEmpty {
+                        PRRowReviewers(reviewers: reviewers)
                     }
                 }
 
@@ -939,8 +1014,16 @@ public struct PRIndexRowView: View, Equatable {
                         .font(.system(size: 9))
                         .foregroundStyle(Color.secondary.opacity(0.35))
 
-                    // Col 4: Line Additions & Deletions
+                    // Col 4: Size + Line Additions & Deletions
                     HStack(spacing: 4) {
+                        Text(pr.size.rawValue)
+                            .font(.system(size: 9.5, weight: .bold))
+                            .foregroundStyle(pr.size.color)
+                            .frame(width: 22, height: 16)
+                            .background(pr.size.color.opacity(0.14))
+                            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                            .opacity(pr.additions + pr.deletions > 0 ? 1 : 0)
+                            .help("Size \(pr.size.rawValue): \(pr.size.rangeText)")
                         Text("+\(pr.additions.formatted())")
                             .font(.system(size: 11, weight: .medium, design: .monospaced))
                             .foregroundStyle(Color.green.opacity(0.80))
@@ -950,10 +1033,10 @@ public struct PRIndexRowView: View, Equatable {
                             .font(.system(size: 11, weight: .medium, design: .monospaced))
                             .foregroundStyle(Color.red.opacity(0.80))
                             .lineLimit(1)
+                            .help("+\(pr.additions) additions, -\(pr.deletions) deletions")
                     }
-                    .frame(width: 95, alignment: .leading)
+                    .frame(width: 125, alignment: .leading)
                     .redacted(reason: isEnriching ? .placeholder : [])
-                    .help("+\(pr.additions) additions, -\(pr.deletions) deletions")
                 }
             }
         }
@@ -970,3 +1053,48 @@ public struct PRIndexRowView: View, Equatable {
     }
 }
 
+
+/// Reviewer avatars on a list row, ringed by their latest review state (dashed while a review is requested).
+private struct PRRowReviewers: View {
+    let reviewers: [PRListReviewer]
+
+    private static func color(_ status: PRListReviewer.Status) -> Color {
+        switch status {
+        case .approved: return .green
+        case .changesRequested: return .red
+        case .commented: return .secondary
+        case .requested: return .orange
+        }
+    }
+
+    private static func label(_ status: PRListReviewer.Status) -> String {
+        switch status {
+        case .approved: return "approved"
+        case .changesRequested: return "requested changes"
+        case .commented: return "commented"
+        case .requested: return "review requested"
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: -4) {
+            ForEach(reviewers.prefix(5), id: \.login) { reviewer in
+                PRAvatarView(authorName: reviewer.login, avatarUrl: reviewer.avatarUrl, size: 18)
+                    .padding(2)
+                    .overlay(
+                        Circle().strokeBorder(Self.color(reviewer.status),
+                                              style: StrokeStyle(lineWidth: 1.5, dash: reviewer.status == .requested ? [2.5, 2] : []))
+                    )
+                    .help("\(reviewer.login): \(Self.label(reviewer.status))")
+            }
+            if reviewers.count > 5 {
+                Text("+\(reviewers.count - 5)")
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, 8)
+                    .help(reviewers.dropFirst(5).map { "\($0.login): \(Self.label($0.status))" }.joined(separator: "\n"))
+            }
+        }
+        .fixedSize()
+    }
+}

@@ -109,7 +109,9 @@ public struct CommitDetailView: View {
                 Divider()
 
                 // Diff Viewer for Commit
-                DiffViewer(state: state, diff: state.commitDiff, title: "Changes in \(commit.shortSha)")
+                DiffViewer(state: state, diff: state.commitDiff, title: "Changes in \(commit.shortSha)",
+                           imageSources: ImageDiffSources(old: .revision("\(commit.sha)^"), new: .revision(commit.sha)),
+                           blameRevision: commit.sha)
             } else {
                 VStack(spacing: 12) {
                     Spacer()

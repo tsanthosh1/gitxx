@@ -303,9 +303,9 @@ public enum AIChatTools {
     private static func callGitHubAPI(_ args: [String: Any], token: String?) async -> (output: String, ok: Bool) {
         guard let token, !token.isEmpty else { return ("No GitHub token is configured.", false) }
         var path = args["path"] as? String ?? "/"
-        if path.hasPrefix("https://api.github.com") { path = String(path.dropFirst("https://api.github.com".count)) }
-        guard !path.contains("://"), let url = URL(string: "https://api.github.com" + (path.hasPrefix("/") ? path : "/" + path)) else {
-            return ("Only api.github.com paths are allowed.", false)
+        if path.hasPrefix(GitHubHost.api) { path = String(path.dropFirst(GitHubHost.api.count)) }
+        guard !path.contains("://"), let url = URL(string: GitHubHost.api + (path.hasPrefix("/") ? path : "/" + path)) else {
+            return ("Only GitHub API paths are allowed.", false)
         }
         var request = URLRequest(url: url)
         let isGraphQL = path.hasSuffix("graphql")

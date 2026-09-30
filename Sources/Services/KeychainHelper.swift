@@ -58,6 +58,32 @@ public enum KeychainHelper {
         return String(data: data, encoding: .utf8)
     }
 
+    /// Keychain only, never mirrored to UserDefaults.
+    public static func saveSecret(_ secret: String, forAccount account: String) -> Bool {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: serviceName,
+            kSecAttrAccount as String: account
+        ]
+        SecItemDelete(query as CFDictionary)
+        var add = query
+        add[kSecValueData as String] = Data(secret.utf8)
+        return SecItemAdd(add as CFDictionary, nil) == errSecSuccess
+    }
+
+    public static func getSecret(forAccount account: String) -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: serviceName,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        var item: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess, let data = item as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
     public static func deleteToken(forAccount account: String) {
         UserDefaults.standard.removeObject(forKey: account)
         let query: [String: Any] = [

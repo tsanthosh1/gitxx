@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 
 /// Every "open in browser" in GitXX goes through here. GitHub links get a `gitxx_browser=1` marker so the
 /// GitXX Links browser extension leaves them in the browser instead of sending them straight back to GitXX.
@@ -15,7 +16,7 @@ enum LinkRouter {
     }
 
     static func markedForBrowser(_ url: URL) -> URL {
-        guard let host = url.host?.lowercased(), host == "github.com" || host == "www.github.com",
+        guard let host = url.host?.lowercased(), GitHubHost.isWebHost(host),
               var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return url }
         var items = components.queryItems ?? []
         guard !items.contains(where: { $0.name == skipParameter }) else { return url }
@@ -56,8 +57,15 @@ enum LinkRouter {
     /// Lets the extension hand links over directly instead of through `gitxx://`, which makes Chrome ask
     /// "Open GitXX?" and needs a tab to stay open while it does.
     static let nativeHostName = "com.gitxx.links"
-    /// Pinned by the `key` in the extension's manifest.json.
-    static let extensionID = "hekkbnbknclfolcgmojdempedkmkbokj"
+    /// Chrome's ID for an unpacked extension: the first 128 bits of SHA-256 of the folder's resolved path, written
+    /// with the letters a–p. Loading the installed folder therefore always yields this ID.
+    static var extensionID: String {
+        let path = installedExtension.resolvingSymlinksInPath().path
+        let digest = SHA256.hash(data: Data(path.utf8))
+        return digest.prefix(16).map { byte in
+            [byte >> 4, byte & 0x0f].map { String(UnicodeScalar(UInt8(ascii: "a") + $0)) }.joined()
+        }.joined()
+    }
 
     private static var installedNativeHost: URL {
         installedExtension.deletingLastPathComponent().appendingPathComponent("NativeHost/gitxx-link-host")

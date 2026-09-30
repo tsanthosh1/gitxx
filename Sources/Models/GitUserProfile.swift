@@ -47,7 +47,7 @@ public struct GitUserProfile: Identifiable, Codable, Equatable, Sendable {
         }
         let trimmed = githubUsername.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty {
-            return URL(string: "https://github.com/\(trimmed).png?size=96")
+            return URL(string: "\(GitHubHost.web)/\(trimmed).png?size=96")
         }
         return nil
     }

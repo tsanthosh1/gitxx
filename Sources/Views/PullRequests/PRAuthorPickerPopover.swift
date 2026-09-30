@@ -179,6 +179,6 @@ enum PRAuthorAvatars {
     @MainActor static func remember(login: String, url: String) { urls[login.lowercased()] = url }
 
     @MainActor static func url(for login: String) -> String {
-        urls[login.lowercased()] ?? "https://github.com/\(login).png?size=64"
+        urls[login.lowercased()] ?? "\(GitHubHost.web)/\(login).png?size=64"
     }
 }

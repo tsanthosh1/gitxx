@@ -3,7 +3,6 @@
   "name": "GitXX Links",
   "version": "2.0.0",
   "description": "Opens GitHub pull requests, commits, Actions and repositories in GitXX, wherever the link comes from.",
-
   "minimum_chrome_version": "116",
   "permissions": ["storage", "tabs", "webNavigation", "contextMenus", "scripting", "nativeMessaging", "declarativeNetRequestWithHostAccess"],
   "host_permissions": ["https://github.com/*", "https://www.github.com/*"],

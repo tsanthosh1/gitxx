@@ -26,6 +26,7 @@ public enum PRWebAction: Sendable {
     case showPRActions
     case explainCheck(name: String)
     case resolveConflictsLocally
+    case react(kind: String, commentId: String, content: PRReaction)
 }
 
 public struct PRRepoContext: Sendable {
@@ -197,7 +198,7 @@ extension AppState {
         refreshRepoSilently()
         guard let pr = selectedPR, let ctx = prRepoContext() else { return }
         Task {
-            await GitHubHTTPCache.shared.remove(for: "https://api.github.com/repos/\(ctx.owner)/\(ctx.repo)/pulls/\(pr.number)")
+            await GitHubHTTPCache.shared.remove(for: "\(GitHubHost.api)/repos/\(ctx.owner)/\(ctx.repo)/pulls/\(pr.number)")
             guard self.selectedPR?.number == pr.number, let current = self.selectedPR else { return }
             self.loadPRDetails(for: current)
         }
@@ -384,7 +385,7 @@ extension AppState {
             if !draft {
                 self.prTimeline.append(.readyForReview(authorName: self.prMeta?.viewerLogin ?? "you", at: Date()))
             }
-            await GitHubHTTPCache.shared.remove(for: "https://api.github.com/repos/\(ctx.owner)/\(ctx.repo)/pulls/\(pr.number)")
+            await GitHubHTTPCache.shared.remove(for: "\(GitHubHost.api)/repos/\(ctx.owner)/\(ctx.repo)/pulls/\(pr.number)")
             self.showToast(draft ? "Converted to draft" : "Marked ready for review", type: .success)
             self.loadPRMergeability(for: pr)
             self.loadPRs()
@@ -471,10 +472,67 @@ extension AppState {
                 explainFailedCheck(name)
             case .resolveConflictsLocally:
                 try await updateSelectedPRBranchLocally()
+            case .react(let kind, let commentId, let content):
+                try await toggleReaction(kind: kind, commentId: commentId, content: content)
             }
             return true
         } catch {
             return false
+        }
+    }
+
+    // MARK: - Mentions
+
+    /// People in this repository matching `query`, for @mention autocomplete. Empty on any failure.
+    func searchMentionableUsers(_ query: String) async -> [GitHubUserSuggestion] {
+        guard let ctx = prRepoContext() else { return [] }
+        return (try? await gitHubService.searchMentionableUsers(owner: ctx.owner, repo: ctx.repo, query: query, token: ctx.token)) ?? []
+    }
+
+    // MARK: - Reactions
+
+    /// Toggles the viewer's reaction on a conversation or inline comment and adjusts the count in place.
+    func toggleReaction(kind: String, commentId: String, content: PRReaction) async throws {
+        guard let ctx = prRepoContext() else { return }
+        if gitHubViewerLogin == nil { ensureGitHubViewerLogin() }
+        for _ in 0..<20 where gitHubViewerLogin == nil { try? await Task.sleep(nanoseconds: 100_000_000) }
+        guard let viewer = gitHubViewerLogin else {
+            showToast("Couldn't identify your GitHub account", type: .error)
+            return
+        }
+        do {
+            let added = try await gitHubService.toggleReaction(owner: ctx.owner, repo: ctx.repo, kind: kind, commentId: commentId,
+                                                                content: content, viewer: viewer, token: ctx.token)
+            adjustReaction(kind: kind, commentId: commentId, content: content, by: added ? 1 : -1)
+        } catch {
+            showToast("Couldn't react: \(error.localizedDescription)", type: .error)
+            throw error
+        }
+    }
+
+    private func adjustReaction(kind: String, commentId: String, content: PRReaction, by delta: Int) {
+        func bump(_ counts: [String: Int]?) -> [String: Int] {
+            var counts = counts ?? [:]
+            let n = max(0, (counts[content.rawValue] ?? 0) + delta)
+            counts[content.rawValue] = n == 0 ? nil : n
+            return counts
+        }
+        prTimeline = prTimeline.map { item in
+            switch item {
+            case .issueComment(var c) where kind == "issue" && c.id == commentId:
+                c.reactions = bump(c.reactions)
+                return .issueComment(c)
+            case .reviewThread(var t) where kind == "review" && t.comments.contains(where: { $0.id == commentId }):
+                t.comments = t.comments.map { c in
+                    guard c.id == commentId else { return c }
+                    var c = c
+                    c.reactions = bump(c.reactions)
+                    return c
+                }
+                return .reviewThread(t)
+            default:
+                return item
+            }
         }
     }
 

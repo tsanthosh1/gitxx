@@ -31,6 +31,8 @@ public struct TerminalView: View {
 
     public var body: some View {
         VStack(spacing: 0) {
+            terminalTabBar
+
             // Terminal Chrome Header Bar
             terminalHeaderBar
 
@@ -63,6 +65,77 @@ public struct TerminalView: View {
                 }
             }
         }
+    }
+
+    // MARK: - Tabs
+
+    private var terminalTabBar: some View {
+        let activeID = state.activeTerminalSessionID ?? state.terminalSessions.first?.id
+        return HStack(spacing: 4) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 4) {
+                    ForEach(state.terminalSessions) { session in
+                        terminalTab(session, active: session.id == activeID)
+                    }
+                }
+            }
+            Button {
+                state.newTerminalSession()
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 11, weight: .semibold))
+                    .frame(width: 24, height: 22)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.hoverPlain)
+            .help("New terminal tab")
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 10)
+        .padding(.top, 6)
+        .padding(.bottom, 4)
+        .themedSurface(state.accentTheme, .header)
+    }
+
+    private func terminalTab(_ session: TerminalSession, active: Bool) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "terminal")
+                .font(.system(size: 10))
+            Text(session.title)
+                .font(.system(size: 11, weight: active ? .semibold : .regular))
+            if !active, !session.entries.isEmpty {
+                Text("\(session.entries.count)")
+                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .padding(.horizontal, 4)
+                    .background(Color.secondary.opacity(0.18), in: Capsule())
+            }
+            if state.terminalSessions.count > 1 {
+                Button {
+                    state.closeTerminalSession(session.id)
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 8, weight: .bold))
+                        .frame(width: 14, height: 14)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.hoverPlain)
+                .help("Close tab")
+            }
+        }
+        .foregroundStyle(active ? Color.primary : Color.secondary)
+        .padding(.leading, 10)
+        .padding(.trailing, state.terminalSessions.count > 1 ? 4 : 10)
+        .frame(height: 24)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(active ? Color(NSColor.textBackgroundColor) : Color.secondary.opacity(0.06))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(active ? state.accentTheme.primaryColor.opacity(0.5) : Color.clear, lineWidth: 1)
+        )
+        .contentShape(Rectangle())
+        .onTapGesture { state.selectTerminalSession(session.id) }
     }
 
     // MARK: - Terminal Chrome Header Bar

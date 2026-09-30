@@ -239,7 +239,7 @@ public struct CreatePRSheet: View {
             state.showCreatePRSheet = false
             Task { await state.openPullRequest(number: pr.number) }
         } else if let ctx = state.prRepoContext(),
-                  let url = URL(string: "https://github.com/\(ctx.owner)/\(ctx.repo)/pulls?q=is%3Apr+is%3Aopen+head%3A\(headBranch.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? headBranch)") {
+                  let url = URL(string: "\(GitHubHost.web)/\(ctx.owner)/\(ctx.repo)/pulls?q=is%3Apr+is%3Aopen+head%3A\(headBranch.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? headBranch)") {
             LinkRouter.open(url)
         }
     }

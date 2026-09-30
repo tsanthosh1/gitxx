@@ -18,6 +18,8 @@ public struct PRConversationWebView: NSViewRepresentable {
     public var onNavPanelOpened: (@MainActor () -> Void)?
     /// The PR's head branch is checked out in the open repository.
     public var headCheckedOut: Bool = false
+    /// Looks up people for @mention autocomplete in the page's comment boxes.
+    public var onMentionSearch: (@MainActor (String) async -> [GitHubUserSuggestion])?
 
     public init(
         pr: PullRequest,
@@ -32,7 +34,8 @@ public struct PRConversationWebView: NSViewRepresentable {
         onChromeHidden: (@MainActor (Bool) -> Void)? = nil,
         openNavPanel: Bool = false,
         onNavPanelOpened: (@MainActor () -> Void)? = nil,
-        headCheckedOut: Bool = false
+        headCheckedOut: Bool = false,
+        onMentionSearch: (@MainActor (String) async -> [GitHubUserSuggestion])? = nil
     ) {
         self.pr = pr
         self.timeline = timeline
@@ -47,6 +50,7 @@ public struct PRConversationWebView: NSViewRepresentable {
         self.openNavPanel = openNavPanel
         self.onNavPanelOpened = onNavPanelOpened
         self.headCheckedOut = headCheckedOut
+        self.onMentionSearch = onMentionSearch
     }
 
     /// Cheap fingerprint of every render input, so SwiftUI updates unrelated to the PR skip HTML generation entirely.
@@ -289,6 +293,18 @@ public struct PRConversationWebView: NSViewRepresentable {
                 parent.onChromeHidden?((body["hidden"] as? Bool) ?? false)
                 return
             }
+            if actionName == "mentionSearch" {
+                guard let query = body["q"] as? String, let search = parent.onMentionSearch else { return }
+                Task { @MainActor [weak self] in
+                    let users = await search(query)
+                    let list = users.map { ["login": $0.login, "name": $0.name ?? "", "avatar": $0.avatarUrl ?? ""] }
+                    guard let webView = self?.webView,
+                          let data = try? JSONSerialization.data(withJSONObject: [query, list]),
+                          let literal = String(data: data, encoding: .utf8) else { return }
+                    webView.evaluateJavaScript("window.gitxxMentions && window.gitxxMentions(\(literal)[0], \(literal)[1])", completionHandler: nil)
+                }
+                return
+            }
             guard let action = Self.parseAction(actionName, body) else { return }
             let key = body["key"] as? String
             guard let handler = parent.onAction else { return }
@@ -339,6 +355,10 @@ public struct PRConversationWebView: NSViewRepresentable {
                 return .openCheckRun(runId: runId, jobId: (body["jobId"] as? NSNumber)?.intValue)
             case "showPRActions":
                 return .showPRActions
+            case "react":
+                guard let kind = body["kind"] as? String, let id = body["id"] as? String,
+                      let content = (body["content"] as? String).flatMap(PRReaction.init(rawValue:)) else { return nil }
+                return .react(kind: kind, commentId: id, content: content)
             case "explainCheck":
                 return (body["name"] as? String).map { .explainCheck(name: $0) }
             case "refresh":

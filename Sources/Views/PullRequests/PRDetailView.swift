@@ -674,7 +674,7 @@ public struct PRDetailView: View {
 
                 Spacer()
 
-                Link(destination: URL(string: "https://github.com/settings/tokens/new?description=GitXX&scopes=repo,read:org")!) {
+                Link(destination: URL(string: "\(GitHubHost.web)/settings/tokens/new?description=GitXX&scopes=repo,read:org")!) {
                     HStack(spacing: 4) {
                         Text("Create Token on GitHub")
                         Image(systemName: "arrow.up.right")
